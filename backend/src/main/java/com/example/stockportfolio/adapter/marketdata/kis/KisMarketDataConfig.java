@@ -70,14 +70,14 @@ public class KisMarketDataConfig {
     public KisMarketDataAdapter kisMarketDataAdapter(
             KisHttpClient kisHttpClient,
             RestClient kisRestClient,
-            @Value("${exchangerate.host-url:https://api.exchangerate.host}") String exchangeRateHostUrl,
+            @Value("${fx.fallback-url:https://api.frankfurter.app}") String fxFallbackUrl,
             @Value("${kis.fx-probe-symbol:AAPL}") String fxProbeSymbol,
             @Value("${kis.fx-probe-exchange:NAS}") String fxProbeExchange,
             Clock kisClock) {
         return new KisMarketDataAdapter(
                 kisHttpClient,
                 kisRestClient,
-                exchangeRateHostUrl,
+                fxFallbackUrl,
                 fxProbeSymbol,
                 Exchange.valueOf(fxProbeExchange),
                 kisClock);

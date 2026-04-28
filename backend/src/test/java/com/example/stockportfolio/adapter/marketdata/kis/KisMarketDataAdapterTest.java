@@ -151,14 +151,16 @@ class KisMarketDataAdapterTest {
 
     private void stubFallbackFx(String rate) {
         wireMock.stubFor(get(urlPathEqualTo("/latest"))
-                .withQueryParam("base", equalTo("USD"))
-                .withQueryParam("symbols", equalTo("KRW"))
+                .withQueryParam("from", equalTo("USD"))
+                .withQueryParam("to", equalTo("KRW"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("""
                                 {
+                                  "amount": 1.0,
                                   "base": "USD",
+                                  "date": "2026-04-28",
                                   "rates": { "KRW": "%s" }
                                 }
                                 """.formatted(rate))));

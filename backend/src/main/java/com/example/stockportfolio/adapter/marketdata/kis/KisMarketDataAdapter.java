@@ -33,7 +33,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     private final KisHttpClient kisHttpClient;
     private final RestClient fxFallbackClient;
-    private final String exchangeRateHostUrl;
+    private final String fxFallbackUrl;
     private final String fxProbeSymbol;
     private final Exchange fxProbeExchange;
     private final Clock clock;
@@ -42,13 +42,13 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     public KisMarketDataAdapter(KisHttpClient kisHttpClient,
                                 RestClient fxFallbackClient,
-                                String exchangeRateHostUrl,
+                                String fxFallbackUrl,
                                 String fxProbeSymbol,
                                 Exchange fxProbeExchange,
                                 Clock clock) {
         this.kisHttpClient = kisHttpClient;
         this.fxFallbackClient = fxFallbackClient;
-        this.exchangeRateHostUrl = exchangeRateHostUrl;
+        this.fxFallbackUrl = fxFallbackUrl;
         this.fxProbeSymbol = fxProbeSymbol;
         this.fxProbeExchange = fxProbeExchange;
         this.clock = clock;
@@ -79,7 +79,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
         }
         BigDecimal rate = fetchRateFromKis();
         if (rate == null) {
-            log.warn("KIS 환율 추출 실패 → exchangerate.host 폴백 사용");
+            log.warn("KIS 환율 추출 실패 → frankfurter.app 폴백 사용");
             rate = fetchRateFromFallback();
         }
         fxCache.set(new CachedRate(rate, now.plus(FX_TTL)));
@@ -97,11 +97,16 @@ public class KisMarketDataAdapter implements MarketDataPort {
             JsonNode output = output(root);
             BigDecimal rate = readDecimal(output, FX_KEYS).orElse(null);
             if (rate == null) {
+                if (log.isDebugEnabled()) {
+                    log.debug("KIS price-detail 응답에서 환율 키({}) 매칭 실패. 응답 output 키 목록={}",
+                            FX_KEYS, fieldNames(output));
+                }
                 return null;
             }
             if (rate.signum() <= 0
                     || rate.compareTo(new BigDecimal("100")) < 0
                     || rate.compareTo(new BigDecimal("5000")) > 0) {
+                log.debug("KIS 환율 값이 정상 범위(100~5000) 밖이라 폐기: {}", rate);
                 return null;
             }
             return rate;
@@ -113,13 +118,17 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     private BigDecimal fetchRateFromFallback() {
         JsonNode root = fxFallbackClient.get()
-                .uri(exchangeRateHostUrl + "/latest?base=USD&symbols=KRW")
+                .uri(fxFallbackUrl + "/latest?from=USD&to=KRW")
                 .retrieve()
                 .body(JsonNode.class);
         if (root == null || !root.has("rates") || !root.get("rates").has("KRW")) {
-            throw new IllegalStateException("exchangerate.host 응답에서 rates.KRW 를 찾을 수 없습니다: " + root);
+            throw new IllegalStateException("FX 폴백 응답에서 rates.KRW 를 찾을 수 없습니다: " + root);
         }
         return new BigDecimal(root.get("rates").get("KRW").asString());
+    }
+
+    private static java.util.Collection<String> fieldNames(JsonNode node) {
+        return node.propertyNames();
     }
 
     private static JsonNode output(JsonNode root) {
