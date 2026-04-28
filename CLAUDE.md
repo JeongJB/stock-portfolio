@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 사용자의 **개인 미국 주식 포트폴리오 관리** 애플리케이션. 1인 사용 전제이며, 비용 최소화를 위해 **AWS Lambda + DynamoDB 서버리스** 아키텍처를 목표로 한다.
 
-현재 상태(2026-04-28): P0-1~P0-3 완료, **P0-4a(한투 OpenAPI 어댑터) 발주 직전 중단**. 자세한 재개 가이드는 아래 ["진행 상태 / 재개 가이드"](#진행-상태--재개-가이드) 참고.
+현재 상태(2026-04-28): **P0-1 ~ P0-4a 완료** — 도메인(거래·현금·포지션), DynamoDB 영속성, Web·Application 레이어, Lambda 어댑터, KIS OpenAPI 시세·환율 어댑터(+ exchangerate.host 폴백)까지 구현·테스트 완료. 다음 P0 발주 단위는 `planner` 재검토 후 결정.
 
 ### 사용자가 명시한 베이스라인 기능
 
@@ -26,9 +26,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Gradle Wrapper** — 항상 `./gradlew` 사용, 시스템 `gradle` 금지
 - **JUnit 5** (`useJUnitPlatform()`)
 - 베이스 패키지: `com.example.stockportfolio`
-- **AWS SDK v2** BOM `2.32.5` — `dynamodb`, `url-connection-client` 사용 중. (P0-4a에서 `ssm` 추가 예정)
+- **AWS SDK v2** BOM `2.32.5` — `dynamodb`, `url-connection-client`, `ssm`(KIS appkey/appsecret 보관) 사용
 - **Lambda 어댑터**: `spring-cloud-function-adapter-aws 4.3.0` (Spring Cloud BOM `2025.0.0`) — Spring Boot 4.0.6 호환 확인됨. 핸들러 클래스 `org.springframework.cloud.function.adapter.aws.FunctionInvoker`, 함수명 `apiGatewayHandler`
 - **DynamoDB 통합 테스트**: testcontainers `amazon/dynamodb-local:2.5.4` (도커 필요 — 사용자 환경은 rancher-desktop)
+- **외부 HTTP 어댑터 테스트**: `wiremock-standalone 3.13.1` (KIS OpenAPI 응답 스텁)
 - (예정) 프론트엔드 — **React.js + PWA**, **S3 + CloudFront** 정적 호스팅 (백엔드와 별도 디렉터리/리포)
 
 ## 자주 쓰는 명령
