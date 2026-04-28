@@ -1,54 +1,33 @@
-import { Routes, Route, Link } from 'react-router-dom'
+import { NavLink, Route, Routes } from 'react-router-dom'
+import { CurrencyToggle } from './components/CurrencyToggle'
+import { Dashboard } from './pages/Dashboard'
+import { Trades } from './pages/Trades'
+import { Snapshots } from './pages/Snapshots'
 
-function Dashboard() {
-  return (
-    <section className="space-y-2">
-      <h2 className="text-xl font-medium">대시보드</h2>
-      <p className="text-slate-600 dark:text-slate-300">
-        파이 차트와 평가자산 vs 원금이 들어갈 자리.
-      </p>
-    </section>
-  )
-}
-
-function Trades() {
-  return (
-    <section className="space-y-2">
-      <h2 className="text-xl font-medium">거래</h2>
-      <p className="text-slate-600 dark:text-slate-300">
-        DEPOSIT / WITHDRAW / BUY / SELL 입력 폼이 들어갈 자리.
-      </p>
-    </section>
-  )
-}
-
-function Snapshots() {
-  return (
-    <section className="space-y-2">
-      <h2 className="text-xl font-medium">스냅샷 추이</h2>
-      <p className="text-slate-600 dark:text-slate-300">
-        총평가액 시계열 라인 차트가 들어갈 자리.
-      </p>
-    </section>
-  )
-}
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  isActive
+    ? 'font-medium text-slate-900 dark:text-slate-100'
+    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
 
 export default function App() {
   return (
-    <div className="mx-auto max-w-5xl p-6 space-y-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">Stock Portfolio</h1>
-        <nav className="flex gap-4 text-sm">
-          <Link to="/" className="hover:underline">
-            대시보드
-          </Link>
-          <Link to="/trades" className="hover:underline">
-            거래
-          </Link>
-          <Link to="/snapshots" className="hover:underline">
-            스냅샷
-          </Link>
-        </nav>
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-6">
+          <h1 className="text-2xl font-semibold">Stock Portfolio</h1>
+          <nav className="flex gap-4 text-sm">
+            <NavLink to="/" end className={navLinkClass}>
+              대시보드
+            </NavLink>
+            <NavLink to="/trades" className={navLinkClass}>
+              거래
+            </NavLink>
+            <NavLink to="/snapshots" className={navLinkClass}>
+              스냅샷
+            </NavLink>
+          </nav>
+        </div>
+        <CurrencyToggle />
       </header>
       <main>
         <Routes>
