@@ -38,3 +38,12 @@ out/
 
 ### Claude Code ###
 .claude/settings.local.json
+
+### Frontend ###
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.env.local
+frontend/.env.*.local
+npm-debug.log*
+yarn-error.log*

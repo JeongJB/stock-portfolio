@@ -8,6 +8,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 사용자의 **개인 미국 주식 포트폴리오 관리** 애플리케이션. 1인 사용 전제이며, 비용 최소화를 위해 **AWS Lambda + DynamoDB 서버리스** 아키텍처를 목표로 한다.
 
+**저장소 구조 (모노리포)**:
+
+```
+.
+├── backend/   # Spring Boot 4.0.6 / Java 25 / AWS Lambda + DynamoDB
+└── frontend/  # React + Vite + TypeScript / PWA / S3 + CloudFront 정적 호스팅
+```
+
+루트의 `.claude/`, `CLAUDE.md`, `.gitignore`, `.gitattributes`는 모노리포 전체에 적용되는 자산이다.
+
 현재 상태(2026-04-28): **P0 전체 소진(P0-1 ~ P0-4d)** — 도메인(거래·현금·포지션), DynamoDB 영속성, Web·Application 레이어, Lambda 어댑터, KIS OpenAPI 시세·환율 어댑터(+ exchangerate.host 폴백), `GET /api/portfolio` 평가액·비중·손익 통합, `POST/GET /api/snapshots` 시계열 박제, **TICKER#<sym>/QUOTE#<KST 날짜> DynamoDB 시세 캐시(36h TTL)**까지 구현·테스트(64개) 완료. 다음 단계 후보: **(1) 실사용 검증 한 주**, **(2) 프론트엔드 React PWA 착수**, **(3) P1 발주**(EOD 자동 스냅샷 / 종목 마스터+GSI1 / 배당·수수료 거래종류 / IRR 등). `planner` 재검토로 진행 단위를 결정.
 
 ### 사용자가 명시한 베이스라인 기능
@@ -21,26 +31,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 기술 스택
 
+### Backend (`backend/`)
+
 - **Java 25** (Gradle 툴체인이 자동 프로비저닝 — 시스템 JDK가 낮아도 됨)
 - **Spring Boot 4.0.6** / **Spring Framework 7** / **Jackson 3**(`tools.jackson.databind.*` import 경로) / `io.spring.dependency-management 1.1.7`
-- **Gradle Wrapper** — 항상 `./gradlew` 사용, 시스템 `gradle` 금지
+- **Gradle Wrapper** — 항상 `backend/gradlew` 사용, 시스템 `gradle` 금지
 - **JUnit 5** (`useJUnitPlatform()`)
 - 베이스 패키지: `com.example.stockportfolio`
 - **AWS SDK v2** BOM `2.32.5` — `dynamodb`, `url-connection-client`, `ssm`(KIS appkey/appsecret 보관) 사용
 - **Lambda 어댑터**: `spring-cloud-function-adapter-aws 4.3.0` (Spring Cloud BOM `2025.0.0`) — Spring Boot 4.0.6 호환 확인됨. 핸들러 클래스 `org.springframework.cloud.function.adapter.aws.FunctionInvoker`, 함수명 `apiGatewayHandler`
 - **DynamoDB 통합 테스트**: testcontainers `amazon/dynamodb-local:2.5.4` (도커 필요 — 사용자 환경은 rancher-desktop)
 - **외부 HTTP 어댑터 테스트**: `wiremock-standalone 3.13.1` (KIS OpenAPI 응답 스텁)
-- (예정) 프론트엔드 — **React.js + PWA**, **S3 + CloudFront** 정적 호스팅 (백엔드와 별도 디렉터리/리포)
+
+### Frontend (`frontend/`)
+
+- **Vite + React + TypeScript** — Vite는 CRA를 대체하는 표준 번들러
+- **PWA** — `vite-plugin-pwa` (Workbox 기반)
+- **차트**: `recharts` (파이/라인 모두 React 친화적)
+- **데이터 패칭**: `@tanstack/react-query` (캐싱·로딩 상태 단순화)
+- **라우팅**: `react-router-dom`
+- **스타일**: `tailwindcss` v4 (`@tailwindcss/vite` 플러그인)
+- **상태**: `useState`/`useReducer`만 (1인용에 Redux/Zustand 과잉)
 
 ## 자주 쓰는 명령
 
 ```bash
-./gradlew bootRun                                     # 앱 실행
-./gradlew build                                       # 컴파일 + 테스트 + jar 생성
-./gradlew test                                        # 전체 테스트
-./gradlew test --tests StockPortfolioApplicationTests # 특정 클래스만
-./gradlew test --tests '*ClassName.methodName'        # 특정 메서드만
-./gradlew clean
+# Backend (cwd = repo root, 별도 디렉터리 진입 없이 -p 로 지정)
+backend/gradlew -p backend bootRun
+backend/gradlew -p backend build
+backend/gradlew -p backend test
+backend/gradlew -p backend test --tests StockPortfolioApplicationTests
+backend/gradlew -p backend test --tests '*ClassName.methodName'
+backend/gradlew -p backend clean
+
+# Frontend (cwd = repo root, --prefix 로 지정)
+npm --prefix frontend install
+npm --prefix frontend run dev      # 개발 서버
+npm --prefix frontend run build    # 정적 빌드 출력 → frontend/dist
+npm --prefix frontend run preview  # 빌드 산출물 로컬 확인
 ```
 
 Java 25 툴체인 첫 실행 시 Gradle이 JDK를 다운로드할 수 있어 시간이 소요될 수 있다.
