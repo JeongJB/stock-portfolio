@@ -18,12 +18,46 @@ repositories {
     mavenCentral()
 }
 
+ext {
+    set('springCloudVersion', '2025.0.0')
+}
+
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter'
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    implementation 'org.springframework.cloud:spring-cloud-function-adapter-aws'
+    implementation 'com.amazonaws:aws-lambda-java-events:3.13.0'
+
+    implementation platform('software.amazon.awssdk:bom:2.32.5')
+    implementation 'software.amazon.awssdk:dynamodb'
+    implementation 'software.amazon.awssdk:ssm'
+    implementation 'software.amazon.awssdk:url-connection-client'
+
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.testcontainers:junit-jupiter:1.20.4'
+    testImplementation 'org.wiremock:wiremock-standalone:3.13.1'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+dependencyManagement {
+    imports {
+        mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+    }
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+    // rancher-desktop 소켓을 명시적으로 testcontainers에 노출 (CI/다른 환경에서는 외부 DOCKER_HOST 우선)
+    def existingDockerHost = System.getenv('DOCKER_HOST')
+    if (existingDockerHost && !existingDockerHost.isBlank()) {
+        environment 'DOCKER_HOST', existingDockerHost
+    } else {
+        def rdSock = "${System.getProperty('user.home')}/.rd/docker.sock"
+        if (file(rdSock).exists()) {
+            environment 'DOCKER_HOST', "unix://${rdSock}"
+            environment 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE', '/var/run/docker.sock'
+        }
+    }
 }

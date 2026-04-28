@@ -1,0 +1,172 @@
+package com.example.stockportfolio.adapter.marketdata.kis;
+
+import com.example.stockportfolio.domain.Currency;
+import com.example.stockportfolio.domain.Exchange;
+import com.example.stockportfolio.domain.MarketDataPort;
+import com.example.stockportfolio.domain.Money;
+import com.example.stockportfolio.domain.Quote;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.client.RestClient;
+import tools.jackson.databind.JsonNode;
+
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
+
+public class KisMarketDataAdapter implements MarketDataPort {
+
+    private static final Logger log = LoggerFactory.getLogger(KisMarketDataAdapter.class);
+
+    // 한투 응답 명세가 공식 문서에 일관되게 노출되지 않아 후보 키를 우선순위대로 시도한다.
+    private static final List<String> PRICE_KEYS = List.of("last", "prpr");
+    private static final List<String> FX_KEYS = List.of("t_xrat", "t_xrate", "xrate", "e_xrat", "last_xrat");
+    private static final List<String> AS_OF_KEYS = List.of("xymd", "tymd", "kymd");
+
+    private static final Duration FX_TTL = Duration.ofHours(1);
+
+    private final KisHttpClient kisHttpClient;
+    private final RestClient fxFallbackClient;
+    private final String exchangeRateHostUrl;
+    private final String fxProbeSymbol;
+    private final Exchange fxProbeExchange;
+    private final Clock clock;
+
+    private final AtomicReference<CachedRate> fxCache = new AtomicReference<>();
+
+    public KisMarketDataAdapter(KisHttpClient kisHttpClient,
+                                RestClient fxFallbackClient,
+                                String exchangeRateHostUrl,
+                                String fxProbeSymbol,
+                                Exchange fxProbeExchange,
+                                Clock clock) {
+        this.kisHttpClient = kisHttpClient;
+        this.fxFallbackClient = fxFallbackClient;
+        this.exchangeRateHostUrl = exchangeRateHostUrl;
+        this.fxProbeSymbol = fxProbeSymbol;
+        this.fxProbeExchange = fxProbeExchange;
+        this.clock = clock;
+    }
+
+    @Override
+    public Quote getQuote(String ticker, Exchange exchange) {
+        Map<String, String> query = new LinkedHashMap<>();
+        query.put("AUTH", "");
+        query.put("EXCD", exchange.name());
+        query.put("SYMB", ticker);
+
+        JsonNode root = kisHttpClient.get("/uapi/overseas-price/v1/quotations/price", "HHDFS00000300", query);
+        JsonNode output = output(root);
+        BigDecimal price = readDecimal(output, PRICE_KEYS)
+                .orElseThrow(() -> new IllegalStateException(
+                        "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다: " + output));
+        Instant asOf = readAsOf(output);
+        return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
+    }
+
+    @Override
+    public BigDecimal getUsdKrwRate() {
+        Instant now = clock.instant();
+        CachedRate cached = fxCache.get();
+        if (cached != null && cached.expiresAt().isAfter(now)) {
+            return cached.rate();
+        }
+        BigDecimal rate = fetchRateFromKis();
+        if (rate == null) {
+            log.warn("KIS 환율 추출 실패 → exchangerate.host 폴백 사용");
+            rate = fetchRateFromFallback();
+        }
+        fxCache.set(new CachedRate(rate, now.plus(FX_TTL)));
+        return rate;
+    }
+
+    private BigDecimal fetchRateFromKis() {
+        try {
+            Map<String, String> query = new LinkedHashMap<>();
+            query.put("AUTH", "");
+            query.put("EXCD", fxProbeExchange.name());
+            query.put("SYMB", fxProbeSymbol);
+            JsonNode root = kisHttpClient.get("/uapi/overseas-price/v1/quotations/price-detail",
+                    "HHDFS76200200", query);
+            JsonNode output = output(root);
+            BigDecimal rate = readDecimal(output, FX_KEYS).orElse(null);
+            if (rate == null) {
+                return null;
+            }
+            if (rate.signum() <= 0
+                    || rate.compareTo(new BigDecimal("100")) < 0
+                    || rate.compareTo(new BigDecimal("5000")) > 0) {
+                return null;
+            }
+            return rate;
+        } catch (RuntimeException ex) {
+            log.warn("KIS 환율 조회 중 예외", ex);
+            return null;
+        }
+    }
+
+    private BigDecimal fetchRateFromFallback() {
+        JsonNode root = fxFallbackClient.get()
+                .uri(exchangeRateHostUrl + "/latest?base=USD&symbols=KRW")
+                .retrieve()
+                .body(JsonNode.class);
+        if (root == null || !root.has("rates") || !root.get("rates").has("KRW")) {
+            throw new IllegalStateException("exchangerate.host 응답에서 rates.KRW 를 찾을 수 없습니다: " + root);
+        }
+        return new BigDecimal(root.get("rates").get("KRW").asString());
+    }
+
+    private static JsonNode output(JsonNode root) {
+        if (root == null) {
+            throw new IllegalStateException("KIS 응답이 비어있습니다");
+        }
+        if (!root.has("output")) {
+            throw new IllegalStateException("KIS 응답에 output 노드가 없습니다: " + root);
+        }
+        return root.get("output");
+    }
+
+    private static java.util.Optional<BigDecimal> readDecimal(JsonNode output, List<String> keys) {
+        for (String key : keys) {
+            if (!output.has(key)) {
+                continue;
+            }
+            String raw = output.get(key).asString();
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            try {
+                return java.util.Optional.of(new BigDecimal(raw.trim()));
+            } catch (NumberFormatException ignore) {
+                // 다음 후보 키로 진행
+            }
+        }
+        return java.util.Optional.empty();
+    }
+
+    private Instant readAsOf(JsonNode output) {
+        for (String key : AS_OF_KEYS) {
+            if (output.has(key)) {
+                String raw = output.get(key).asString();
+                if (raw != null && !raw.isBlank()) {
+                    // 한투 시각 포맷 명세가 가변적이므로 파싱 실패 시 현재 시각으로 안전하게 폴백.
+                    try {
+                        return Instant.parse(raw);
+                    } catch (RuntimeException ignore) {
+                        return clock.instant();
+                    }
+                }
+            }
+        }
+        return clock.instant();
+    }
+
+    private record CachedRate(BigDecimal rate, Instant expiresAt) {
+    }
+}
