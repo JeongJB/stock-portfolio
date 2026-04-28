@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 사용자의 **개인 미국 주식 포트폴리오 관리** 애플리케이션. 1인 사용 전제이며, 비용 최소화를 위해 **AWS Lambda + DynamoDB 서버리스** 아키텍처를 목표로 한다.
 
-현재 상태(2026-04-28): **P0-1 ~ P0-4a 완료** — 도메인(거래·현금·포지션), DynamoDB 영속성, Web·Application 레이어, Lambda 어댑터, KIS OpenAPI 시세·환율 어댑터(+ exchangerate.host 폴백)까지 구현·테스트 완료. 다음 P0 발주 단위는 `planner` 재검토 후 결정.
+현재 상태(2026-04-28): **P0-1 ~ P0-4c 완료** — 도메인(거래·현금·포지션), DynamoDB 영속성, Web·Application 레이어, Lambda 어댑터, KIS OpenAPI 시세·환율 어댑터(+ exchangerate.host 폴백), `GET /api/portfolio` 평가액·비중·손익 통합, `POST/GET /api/snapshots` 시계열 박제까지 구현·테스트(53개) 완료. 잔여 P0 후보: **시세 캐시(`TICKER#<sym>` `QUOTE#<isoDate>` + DynamoDB TTL)**. 후보 4(종목 마스터 + GSI1), 후보 5(EOD 자동 스냅샷)는 P1로 강등 합의됨.
 
 ### 사용자가 명시한 베이스라인 기능
 
@@ -68,12 +68,14 @@ Java 25 툴체인 첫 실행 시 Gradle이 JDK를 다운로드할 수 있어 시
 ## 확정된 핵심 결정 (2026-04-28)
 
 - **시세 + 환율 소스**: **한국투자증권 OpenAPI** 단일 채널 (미국 주식 시세, USD/KRW 환율 모두). OAuth2 access token 약 24시간 만료 → 갱신 로직 필요.
-- **통화 표시**: **KRW / USD 토글**. 데이터는 USD 기준 저장, 스냅샷 시 환율(`usdKrwRate`)도 함께 보존해 과거 KRW 환산 일관성 유지. 변환은 표시 계층에서.
+- **통화 표시**: **KRW / USD 토글**. 데이터는 USD 기준 저장, 스냅샷 시 환율(`usdKrwRate`)도 함께 보존해 과거 KRW 환산 일관성 유지.
+- **응답 형태**: `GET /api/portfolio` 등 응답에 USD 값과 KRW 환산값을 **함께** 싣는다(프론트에서 별도 환산 불필요). 환율은 응답 1건마다 `MarketDataPort.getUsdKrwRate()` 1회 호출로 일관 적용.
+- **스냅샷**: 같은 날짜 재호출은 **덮어쓰기**(append-only는 거래에만 적용). 종목 상세까지 통째로 박제해 후속 분석 여지 보존.
 - **인증**: API Gateway + 단일 API key (1인용).
 - **콜드 스타트**: 별도 대응 없음 (SnapStart/AOT 미적용).
-- **시세 갱신**: 일 1회 EOD (EventBridge cron).
+- **시세 갱신**: 일 1회 EOD (EventBridge cron). EOD 자동 적재는 P1로 미루고 우선 수동 `POST /api/snapshots`로 적립.
+- **인프라 정의**: 현재 IaC 파일 없음. DynamoDB 테이블·TTL·Lambda 등 AWS 리소스는 콘솔 수동 관리(P0 안정화 후 IaC 도입 검토).
 - **타임존**: **KST (Asia/Seoul)** 기준. Lambda `TZ=Asia/Seoul`, DynamoDB SK 날짜·스케줄 모두 KST.
-- **첫 구현**: 거래 입력 → 현금/포지션 갱신 도메인부터.
 
 ## 데이터 모델 요약 (planner 산출물)
 
