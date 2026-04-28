@@ -25,9 +25,8 @@ public class KisMarketDataAdapter implements MarketDataPort {
     private static final Logger log = LoggerFactory.getLogger(KisMarketDataAdapter.class);
 
     // 한투 응답 명세가 공식 문서에 일관되게 노출되지 않아 후보 키를 우선순위대로 시도한다.
-    private static final List<String> PRICE_KEYS = List.of("last", "prpr");
-    private static final List<String> FX_KEYS = List.of("t_xrat", "t_xrate", "xrate", "e_xrat", "last_xrat");
-    private static final List<String> AS_OF_KEYS = List.of("xymd", "tymd", "kymd");
+    private static final List<String> PRICE_KEYS = List.of("last");
+    private static final List<String> FX_KEYS = List.of("t_rate");
 
     private static final Duration FX_TTL = Duration.ofHours(1);
 
@@ -66,7 +65,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
         BigDecimal price = readDecimal(output, PRICE_KEYS)
                 .orElseThrow(() -> new IllegalStateException(
                         "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다: " + output));
-        Instant asOf = readAsOf(output);
+        Instant asOf = clock.instant();
         return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
     }
 
@@ -157,23 +156,6 @@ public class KisMarketDataAdapter implements MarketDataPort {
             }
         }
         return java.util.Optional.empty();
-    }
-
-    private Instant readAsOf(JsonNode output) {
-        for (String key : AS_OF_KEYS) {
-            if (output.has(key)) {
-                String raw = output.get(key).asString();
-                if (raw != null && !raw.isBlank()) {
-                    // 한투 시각 포맷 명세가 가변적이므로 파싱 실패 시 현재 시각으로 안전하게 폴백.
-                    try {
-                        return Instant.parse(raw);
-                    } catch (RuntimeException ignore) {
-                        return clock.instant();
-                    }
-                }
-            }
-        }
-        return clock.instant();
     }
 
     private record CachedRate(BigDecimal rate, Instant expiresAt) {
