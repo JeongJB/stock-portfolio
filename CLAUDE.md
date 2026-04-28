@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 루트의 `.claude/`, `CLAUDE.md`, `.gitignore`, `.gitattributes`는 모노리포 전체에 적용되는 자산이다.
 
-현재 상태(2026-04-28): **백엔드 P0(P0-1 ~ P0-4d) + 프론트엔드 P0-FE(FE-0 ~ FE-3) 완료** — 베이스라인 기능 1·2·3·4가 한 번의 dev 환경 실행으로 모두 동작한다. 자세한 진척·다음 단계는 [진행 로드맵](#진행-로드맵-재개-가이드) 섹션 참고.
+현재 상태(2026-04-28): **백엔드 P0(P0-1 ~ P0-4d) + 프론트엔드 P0-FE(FE-0 ~ FE-3) 완료 + F-CHECK 실사용 검증 완료** — 베이스라인 기능 1·2·3·4가 dev 환경에서 동작 확인됨. 자세한 진척·다음 단계는 [진행 로드맵](#진행-로드맵-재개-가이드) 섹션 참고.
 
 ### 사용자가 명시한 베이스라인 기능
 
@@ -56,16 +56,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 다음 단계 (재개 시 이 순서)
 
-1. **F-CHECK — 실사용 검증** *(사용자 직접)*: backend bootRun + frontend dev server 를 띄워 화면 흐름을 직접 사용해 본다. UX/문구/색상 이슈가 있으면 별도 미니 발주로 정리. 큰 디자인 변경 없으면 다음 단계로.
-2. **FE-4 PWA 아이콘·매니페스트 마무리 (P1-FE)**: 192/512 PNG 아이콘 추가, 매니페스트 보강, iOS/Android "홈 화면에 설치" 동작 검증.
-3. **FE-5 배포 파이프라인 (P1-FE)**: `npm --prefix frontend run build` → S3 sync → CloudFront invalidate. 백엔드는 Lambda + API Gateway 배포(JAR 업로드 + `apiGatewayHandler` 매핑). 이 시점에 **IaC 도입(Terraform/SAM/CDK)** 도 함께 검토 — 현재는 콘솔 수동.
-4. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
+1. **FE-4 PWA 아이콘·매니페스트 마무리 (P1-FE)**: 192/512 PNG 아이콘 추가, 매니페스트 보강, iOS/Android "홈 화면에 설치" 동작 검증.
+2. **FE-5 배포 파이프라인 (P1-FE)**: `npm --prefix frontend run build` → S3 sync → CloudFront invalidate. 백엔드는 Lambda + API Gateway 배포(JAR 업로드 + `apiGatewayHandler` 매핑). 이 시점에 **IaC 도입(Terraform/SAM/CDK)** 도 함께 검토 — 현재는 콘솔 수동.
+3. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
    - EOD 자동 스냅샷 — EventBridge cron + Lambda 핸들러(`takeSnapshot()` 재사용).
-   - 종목 마스터(`TICKER#<sym>/META`) + GSI1 종목별 거래 조회 — 다거래소(NYSE/AMS) 지원도 함께.
+   - 종목 마스터(`TICKER#<sym>/META`) + GSI1 종목별 거래 조회 — 다거래소(NYSE/NAS/AMS) 자동 탐색·저장 방식. **사용자는 ticker만 입력**하고, 백엔드가 첫 매수 거래 처리 시 NAS → NYS → AMS 순으로 KIS 시세 조회를 시도해 가장 먼저 성공한 거래소를 META에 박제. 이후 시세 조회는 META의 거래소를 그대로 사용해 1콜로 끝낸다. 거래소 탐색 결과는 종목별로 한 번만 결정되므로 비용·지연 영향 미미. (현재 GEV 같은 NYSE 종목이 NAS 고정 조회로 시세 미조회되는 문제를 동시에 해소.)
+   - 거래소 이전 주기 재검증 — 종목이 NYSE↔NASDAQ 등으로 거래소를 이전하는 경우가 있으므로 META의 거래소가 영구히 유효하다고 가정하지 않는다. EOD 스냅샷이나 별도 EventBridge cron(주 1회 등)에서 META 거래소 기준 시세 조회가 N회 연속 실패한 종목만 NAS → NYS → AMS 재탐색 수행 후 META 갱신. 매번 모든 종목을 재탐색하면 호출량이 폭증하므로 "실패 시에만 재탐색"이 핵심.
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
    - 백업/내보내기.
-5. **P2 후속**: FE-6 거래 내역 표(GSI1 도입 후), FE-7 다크모드/접근성/모바일 레이아웃, recharts 청크 분할 등 성능 미세 조정.
+4. **P2 후속**:
+   - FE-6 거래 내역 표(GSI1 도입 후).
+   - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.
+   - FE-8 매수 폼 기존 종목 빠른 추가매수 — 신규 매수와 추가 매수가 모두 빈번하므로 ticker 자유 입력은 유지하되, 보유 종목을 한눈에 보여주는 select/자동완성을 같은 폼에서 토글 가능하게 노출. 기존 종목 선택 시 ticker 자동 채움 + 평균단가·수량 힌트로 추가매수 입력 부담 감소(가격·수량은 이번 거래 값이라 비워둠).
+   - FE-9 다크모드/접근성/모바일 레이아웃.
+   - recharts 청크 분할 등 성능 미세 조정.
 
 ### 운영/로컬 dev 1회 수동 작업
 
@@ -128,7 +133,7 @@ backend/gradlew -p backend bootRun                 # :8080
 npm --prefix frontend run dev                      # :5173 (vite proxy로 /api → :8080)
 ```
 
-새 기능은 항상 `planner` → 사용자 검토 → `developer` 흐름. 위 1~5번 다음 단계도 동일.
+새 기능은 항상 `planner` → 사용자 검토 → `developer` 흐름. 위 1~4번 다음 단계도 동일.
 
 ## 기술 스택
 
