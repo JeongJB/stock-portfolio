@@ -233,4 +233,84 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.error").value("bad_request"));
     }
 
+    @Test
+    void POST_snapshots는_현재_view를_박제하고_본문을_반환한다() throws Exception {
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"10000"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"BUY","ticker":"AAPL","qty":"10","price":"150","fee":"1"}
+                                """))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/api/snapshots"))
+                .andExpect(status().isOk())
+                // KST 오늘 날짜로 박제됨 (asOf의 LocalDate)
+                .andExpect(jsonPath("$.date", matchesPattern("^\\d{4}-\\d{2}-\\d{2}$")))
+                .andExpect(jsonPath("$.takenAt", matchesPattern("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*\\+09:00$")))
+                .andExpect(jsonPath("$.usdKrwRate").value("1400"))
+                .andExpect(jsonPath("$.cashUsd").value("8499.0000"))
+                .andExpect(jsonPath("$.totalMarketValueUsd").value("2000.0000"))
+                .andExpect(jsonPath("$.totalCostBasisUsd").value("1500.0000"))
+                .andExpect(jsonPath("$.totalUnrealizedPnlUsd").value("500.0000"))
+                .andExpect(jsonPath("$.positions", hasSize(1)))
+                .andExpect(jsonPath("$.positions[0].ticker").value("AAPL"))
+                .andExpect(jsonPath("$.positions[0].marketValueUsd").value("2000.0000"));
+    }
+
+    @Test
+    void POST_snapshots_빈_포트폴리오에서도_200을_반환한다() throws Exception {
+        mockMvc.perform(post("/api/snapshots"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cashUsd").value("0.0000"))
+                .andExpect(jsonPath("$.principalUsd").value("0.0000"))
+                .andExpect(jsonPath("$.totalMarketValueUsd").value("0.0000"))
+                .andExpect(jsonPath("$.positions", hasSize(0)));
+    }
+
+    @Test
+    void GET_snapshots_파라미터_없으면_기본_90일_윈도로_200을_반환한다() throws Exception {
+        // 박제 한 건 — 오늘 날짜가 자동으로 들어가므로 윈도 안에 포함됨
+        mockMvc.perform(post("/api/snapshots")).andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/snapshots"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.snapshots", hasSize(1)));
+    }
+
+    @Test
+    void GET_snapshots_from_to_지정_시_시계열을_오름차순으로_반환한다() throws Exception {
+        // POST /api/snapshots는 KST 오늘 날짜로만 저장하기 때문에, 다중 날짜 시계열 검증은
+        // repository에 직접 박제해 검증한다. (덮어쓰기/오름차순/윈도 정확성 확인)
+        InMemoryPortfolioRepository repo = (InMemoryPortfolioRepository) repository;
+        repo.saveSnapshot(snapshotFor("2026-04-20"));
+        repo.saveSnapshot(snapshotFor("2026-04-25"));
+        repo.saveSnapshot(snapshotFor("2026-04-28"));
+        repo.saveSnapshot(snapshotFor("2026-05-10")); // 윈도 밖
+
+        mockMvc.perform(get("/api/snapshots")
+                        .param("from", "2026-04-20")
+                        .param("to", "2026-04-28"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.snapshots", hasSize(3)))
+                .andExpect(jsonPath("$.snapshots[0].date").value("2026-04-20"))
+                .andExpect(jsonPath("$.snapshots[1].date").value("2026-04-25"))
+                .andExpect(jsonPath("$.snapshots[2].date").value("2026-04-28"));
+    }
+
+    private static com.example.stockportfolio.adapter.web.dto.SnapshotView snapshotFor(String date) {
+        java.math.BigDecimal zero = new java.math.BigDecimal("0.0000");
+        return new com.example.stockportfolio.adapter.web.dto.SnapshotView(
+                java.time.LocalDate.parse(date),
+                java.time.OffsetDateTime.parse(date + "T09:00:00+09:00"),
+                new java.math.BigDecimal("1400"),
+                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
+                java.util.List.of());
+    }
+
 }

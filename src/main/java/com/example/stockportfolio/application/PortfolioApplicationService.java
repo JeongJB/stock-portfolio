@@ -2,6 +2,7 @@ package com.example.stockportfolio.application;
 
 import com.example.stockportfolio.adapter.web.dto.PortfolioView;
 import com.example.stockportfolio.adapter.web.dto.PositionView;
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.adapter.web.dto.TradeView;
 import com.example.stockportfolio.domain.Exchange;
 import com.example.stockportfolio.domain.MarketDataPort;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -37,6 +39,8 @@ public class PortfolioApplicationService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     // weight 분모가 0일 때(빈 포트폴리오)도 BigDecimal nominator/denominator 정밀도가 보존되도록 별도 scale 선언.
     private static final int WEIGHT_SCALE = 6;
+    // 스냅샷 GET 기본 윈도: 최근 90일.
+    private static final int DEFAULT_SNAPSHOT_DAYS = 90;
 
     private final PortfolioRepository repository;
     private final MarketDataPort marketDataPort;
@@ -159,6 +163,45 @@ public class PortfolioApplicationService {
         return repository.listRecentTrades(limit).stream()
                 .map(TradeView::from)
                 .toList();
+    }
+
+    /**
+     * 현재 평가 결과를 KST 기준 오늘 날짜 슬롯에 박제. 같은 날 재호출이면 덮어쓴다.
+     */
+    public SnapshotView takeSnapshot() {
+        PortfolioView view = view();
+        LocalDate date = view.asOf().toLocalDate();
+        SnapshotView snapshot = new SnapshotView(
+                date,
+                view.asOf(),
+                view.usdKrwRate(),
+                view.cashUsd(),
+                view.cashKrw(),
+                view.principalUsd(),
+                view.principalKrw(),
+                view.totalMarketValueUsd(),
+                view.totalMarketValueKrw(),
+                view.totalCostBasisUsd(),
+                view.totalCostBasisKrw(),
+                view.totalUnrealizedPnlUsd(),
+                view.totalUnrealizedPnlKrw(),
+                view.positions());
+        repository.saveSnapshot(snapshot);
+        return snapshot;
+    }
+
+    /**
+     * from/to 가 null 이면 KST 기준 오늘과 today-90 일로 보충해 시계열을 반환한다.
+     */
+    public List<SnapshotView> listSnapshots(LocalDate from, LocalDate to) {
+        LocalDate today = LocalDate.now(clock.withZone(KST));
+        LocalDate effectiveTo = (to != null) ? to : today;
+        LocalDate effectiveFrom = (from != null) ? from : effectiveTo.minusDays(DEFAULT_SNAPSHOT_DAYS);
+        if (effectiveFrom.isAfter(effectiveTo)) {
+            throw new IllegalArgumentException(
+                    "from(" + effectiveFrom + ")은 to(" + effectiveTo + ")보다 늦을 수 없다");
+        }
+        return repository.findSnapshots(effectiveFrom, effectiveTo);
     }
 
     private static BigDecimal toKrw(BigDecimal usd, BigDecimal rate) {

@@ -1,5 +1,8 @@
 package com.example.stockportfolio.domain;
 
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
+
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -18,4 +21,15 @@ public interface PortfolioRepository {
 
     /** SK prefix `TRADE#` 역순 Query. 최신 순 limit개 반환. */
     List<Trade> listRecentTrades(int limit);
+
+    /**
+     * 스냅샷을 저장한다. 같은 date(KST yyyy-MM-dd)면 덮어쓴다.
+     * SK = SNAPSHOT#&lt;isoDate&gt;.
+     */
+    void saveSnapshot(SnapshotView snapshot);
+
+    /**
+     * SK 범위 쿼리로 from~to(둘 다 inclusive) 사이 스냅샷을 날짜 오름차순으로 반환.
+     */
+    List<SnapshotView> findSnapshots(LocalDate from, LocalDate to);
 }

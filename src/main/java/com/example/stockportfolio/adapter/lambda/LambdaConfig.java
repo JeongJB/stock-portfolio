@@ -5,6 +5,8 @@ import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent
 import com.example.stockportfolio.adapter.web.dto.PortfolioView;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeRequest;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeResponse;
+import com.example.stockportfolio.adapter.web.dto.SnapshotListResponse;
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.application.PortfolioApplicationService;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Trade;
@@ -13,6 +15,8 @@ import tools.jackson.databind.ObjectMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -57,6 +61,17 @@ public class LambdaConfig {
                     Trade trade = service.recordTrade(req.toCommand());
                     return created(mapper.writeValueAsString(RecordTradeResponse.from(trade)));
                 }
+                if ("POST".equalsIgnoreCase(method) && path.endsWith("/api/snapshots")) {
+                    SnapshotView snapshot = service.takeSnapshot();
+                    return ok(mapper.writeValueAsString(snapshot));
+                }
+                if ("GET".equalsIgnoreCase(method) && path.endsWith("/api/snapshots")) {
+                    Map<String, String> qs = event.getQueryStringParameters();
+                    LocalDate from = parseDateOrNull(qs, "from");
+                    LocalDate to = parseDateOrNull(qs, "to");
+                    return ok(mapper.writeValueAsString(
+                            new SnapshotListResponse(service.listSnapshots(from, to))));
+                }
 
                 return notFound(path);
             } catch (DomainException ex) {
@@ -99,5 +114,16 @@ public class LambdaConfig {
             return "null";
         }
         return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    }
+
+    private static LocalDate parseDateOrNull(Map<String, String> qs, String key) {
+        if (qs == null) return null;
+        String raw = qs.get(key);
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return LocalDate.parse(raw);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(key + " 날짜 형식이 잘못되었다 (yyyy-MM-dd): " + raw);
+        }
     }
 }

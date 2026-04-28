@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.web;
 
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Money;
@@ -8,6 +9,7 @@ import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Trade;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -16,6 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * 컨트롤러 IT용 인메모리 fake. recordTrade는 단순 append + 갱신 상태 전체 교체.
@@ -25,6 +28,7 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
 
     private final List<Trade> trades = new ArrayList<>();
     private final Set<String> tradeIds = new HashSet<>();
+    private final TreeMap<LocalDate, SnapshotView> snapshots = new TreeMap<>();
     private Map<String, Position> positions = new HashMap<>();
     private Money cashUsd = Money.zero(Currency.USD);
     private Money cumulativeDeposit = Money.zero(Currency.USD);
@@ -33,6 +37,7 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
     public synchronized void reset() {
         trades.clear();
         tradeIds.clear();
+        snapshots.clear();
         positions.clear();
         cashUsd = Money.zero(Currency.USD);
         cumulativeDeposit = Money.zero(Currency.USD);
@@ -74,5 +79,16 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
             return Collections.unmodifiableList(sorted);
         }
         return Collections.unmodifiableList(sorted.subList(0, limit));
+    }
+
+    @Override
+    public synchronized void saveSnapshot(SnapshotView snapshot) {
+        snapshots.put(snapshot.date(), snapshot);
+    }
+
+    @Override
+    public synchronized List<SnapshotView> findSnapshots(LocalDate from, LocalDate to) {
+        // TreeMap.subMap inclusive both — DynamoDB BETWEEN과 동일 의미
+        return List.copyOf(snapshots.subMap(from, true, to, true).values());
     }
 }

@@ -1,5 +1,7 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.web.dto.PositionView;
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Money;
@@ -32,8 +34,11 @@ import software.amazon.awssdk.services.dynamodb.model.KeyType;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -173,6 +178,87 @@ class DynamoPortfolioRepositoryIT {
         // 동일한 trade를 그대로 한 번 더 — 조건부 Put 실패 → 트랜잭션 취소
         assertThatThrownBy(() -> repository.recordTrade(deposit, portfolio))
                 .isInstanceOf(DomainException.class);
+    }
+
+    @Test
+    void saveSnapshot_단건_저장_후_조회된다() {
+        SnapshotView snapshot = sampleSnapshot("2026-04-28");
+        repository.saveSnapshot(snapshot);
+
+        List<SnapshotView> found = repository.findSnapshots(
+                LocalDate.parse("2026-04-28"), LocalDate.parse("2026-04-28"));
+        assertThat(found).hasSize(1);
+        SnapshotView loaded = found.get(0);
+        assertThat(loaded.date()).isEqualTo(LocalDate.parse("2026-04-28"));
+        assertThat(loaded.usdKrwRate()).isEqualByComparingTo(new BigDecimal("1400"));
+        assertThat(loaded.totalMarketValueUsd()).isEqualByComparingTo(new BigDecimal("2000.0000"));
+        assertThat(loaded.positions()).hasSize(1);
+        assertThat(loaded.positions().get(0).ticker()).isEqualTo("AAPL");
+        assertThat(loaded.positions().get(0).qty()).isEqualByComparingTo(new BigDecimal("10"));
+    }
+
+    @Test
+    void findSnapshots_여러_날짜는_오름차순_시계열로_반환된다() {
+        // 일부러 역순으로 저장
+        repository.saveSnapshot(sampleSnapshot("2026-04-28"));
+        repository.saveSnapshot(sampleSnapshot("2026-04-20"));
+        repository.saveSnapshot(sampleSnapshot("2026-04-25"));
+        // 윈도 밖
+        repository.saveSnapshot(sampleSnapshot("2026-05-01"));
+
+        List<SnapshotView> found = repository.findSnapshots(
+                LocalDate.parse("2026-04-20"), LocalDate.parse("2026-04-28"));
+
+        assertThat(found).hasSize(3);
+        assertThat(found.get(0).date()).isEqualTo(LocalDate.parse("2026-04-20"));
+        assertThat(found.get(1).date()).isEqualTo(LocalDate.parse("2026-04-25"));
+        assertThat(found.get(2).date()).isEqualTo(LocalDate.parse("2026-04-28"));
+    }
+
+    @Test
+    void saveSnapshot_같은_날짜는_덮어쓴다() {
+        repository.saveSnapshot(sampleSnapshot("2026-04-28", "1000"));
+        repository.saveSnapshot(sampleSnapshot("2026-04-28", "9999"));
+
+        List<SnapshotView> found = repository.findSnapshots(
+                LocalDate.parse("2026-04-28"), LocalDate.parse("2026-04-28"));
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).cashUsd()).isEqualByComparingTo(new BigDecimal("9999"));
+    }
+
+    private static SnapshotView sampleSnapshot(String date) {
+        return sampleSnapshot(date, "500");
+    }
+
+    private static SnapshotView sampleSnapshot(String date, String cashUsd) {
+        BigDecimal cash = new BigDecimal(cashUsd);
+        return new SnapshotView(
+                LocalDate.parse(date),
+                OffsetDateTime.parse(date + "T09:00:00+09:00"),
+                new BigDecimal("1400"),
+                cash,
+                cash.multiply(new BigDecimal("1400")),
+                new BigDecimal("1500.0000"),
+                new BigDecimal("2100000.0000"),
+                new BigDecimal("2000.0000"),
+                new BigDecimal("2800000.0000"),
+                new BigDecimal("1000.0000"),
+                new BigDecimal("1400000.0000"),
+                new BigDecimal("1000.0000"),
+                new BigDecimal("1400000.0000"),
+                List.of(new PositionView(
+                        "AAPL",
+                        new BigDecimal("10"),
+                        new BigDecimal("100.0000"),
+                        new BigDecimal("140000.0000"),
+                        new BigDecimal("0.0000"),
+                        new BigDecimal("200.0000"),
+                        new BigDecimal("280000.0000"),
+                        new BigDecimal("2000.0000"),
+                        new BigDecimal("2800000.0000"),
+                        new BigDecimal("0.800000"),
+                        new BigDecimal("1000.0000"),
+                        new BigDecimal("1400000.0000"))));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Money;
@@ -12,12 +13,14 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.Delete;
 import software.amazon.awssdk.services.dynamodb.model.Put;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItem;
 import software.amazon.awssdk.services.dynamodb.model.TransactWriteItemsRequest;
 import software.amazon.awssdk.services.dynamodb.model.TransactionCanceledException;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,6 +34,7 @@ import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttr
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.PK;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.POSITION_SK_PREFIX;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.SK;
+import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.SNAPSHOT_SK_PREFIX;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.TRADE_SK_PREFIX;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.USER_PK;
 
@@ -168,5 +172,38 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
             }
         }
         return trades;
+    }
+
+    @Override
+    public void saveSnapshot(SnapshotView snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        // 같은 날짜 재호출 시 그대로 덮어쓰기 (조건 없음).
+        client.putItem(PutItemRequest.builder()
+                .tableName(tableName)
+                .item(DynamoAttributes.snapshotItem(snapshot))
+                .build());
+    }
+
+    @Override
+    public List<SnapshotView> findSnapshots(LocalDate from, LocalDate to) {
+        Objects.requireNonNull(from, "from");
+        Objects.requireNonNull(to, "to");
+        // SK BETWEEN — DynamoDB는 inclusive 양쪽. 오름차순 스캔으로 자연스러운 시계열 정렬.
+        QueryResponse response = client.query(QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("#pk = :pk AND #sk BETWEEN :from AND :to")
+                .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS(USER_PK),
+                        ":from", AttributeValue.fromS(SNAPSHOT_SK_PREFIX + from.toString()),
+                        ":to", AttributeValue.fromS(SNAPSHOT_SK_PREFIX + to.toString())))
+                .scanIndexForward(true)
+                .build());
+
+        List<SnapshotView> snapshots = new ArrayList<>(response.items().size());
+        for (Map<String, AttributeValue> item : response.items()) {
+            snapshots.add(DynamoAttributes.snapshotFromItem(item));
+        }
+        return snapshots;
     }
 }

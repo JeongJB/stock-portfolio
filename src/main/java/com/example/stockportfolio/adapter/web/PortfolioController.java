@@ -3,12 +3,15 @@ package com.example.stockportfolio.adapter.web;
 import com.example.stockportfolio.adapter.web.dto.PortfolioView;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeRequest;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeResponse;
+import com.example.stockportfolio.adapter.web.dto.SnapshotListResponse;
+import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.adapter.web.dto.TradeView;
 import com.example.stockportfolio.application.PortfolioApplicationService;
 import com.example.stockportfolio.domain.Trade;
 
 import jakarta.validation.Valid;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +21,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -54,5 +58,19 @@ public class PortfolioController {
     @GetMapping("/portfolio")
     public PortfolioView portfolio() {
         return service.view();
+    }
+
+    @PostMapping("/snapshots")
+    public SnapshotView takeSnapshot() {
+        return service.takeSnapshot();
+    }
+
+    @GetMapping("/snapshots")
+    public SnapshotListResponse listSnapshots(
+            @RequestParam(value = "from", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(value = "to", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return new SnapshotListResponse(service.listSnapshots(from, to));
     }
 }
