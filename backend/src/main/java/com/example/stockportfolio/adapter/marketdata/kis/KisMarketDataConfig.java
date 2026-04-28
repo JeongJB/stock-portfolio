@@ -43,8 +43,8 @@ public class KisMarketDataConfig {
     @Bean
     public KisCredentialsProvider kisCredentialsProvider(
             SsmClient ssmClient,
-            @Value("${kis.appkey-parameter:/stockportfolio/api/appkey}") String appKeyParameter,
-            @Value("${kis.appsecret-parameter:/stockportfolio/api/appsecret}") String appSecretParameter) {
+            @Value("${kis.appkey-parameter:/portfolio/kis/app-key}") String appKeyParameter,
+            @Value("${kis.appsecret-parameter:/portfolio/kis/app-secret}") String appSecretParameter) {
         return new SsmCredentialsProvider(ssmClient, appKeyParameter, appSecretParameter);
     }
 

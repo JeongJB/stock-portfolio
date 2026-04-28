@@ -79,7 +79,7 @@ aws configure         # IAM 사용자 access key 입력, region=ap-northeast-2
 aws sts get-caller-identity  # 검증
 ```
 
-IAM 사용자에 최소 권한 정책: `dynamodb:*Item` / `dynamodb:Query` on `Portfolio` 테이블 + `ssm:GetParameter` / `ssm:GetParameters` on `/stockportfolio/api/*`.
+IAM 사용자에 최소 권한 정책: `dynamodb:*Item` / `dynamodb:Query` on `Portfolio` 테이블 + `ssm:GetParameter` / `ssm:GetParameters` on `/portfolio/kis/*`.
 
 #### 2. DynamoDB 테이블 + TTL 생성
 
@@ -104,9 +104,9 @@ aws dynamodb update-time-to-live \
 한국투자증권 OpenAPI 사이트(개인 실전계좌)에서 발급받은 appkey / appsecret 을 등록:
 
 ```bash
-aws ssm put-parameter --name /stockportfolio/api/appkey \
+aws ssm put-parameter --name /portfolio/kis/app-key \
   --value 'YOUR_KIS_APPKEY' --type SecureString
-aws ssm put-parameter --name /stockportfolio/api/appsecret \
+aws ssm put-parameter --name /portfolio/kis/app-secret \
   --value 'YOUR_KIS_APPSECRET' --type SecureString
 ```
 

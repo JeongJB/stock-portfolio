@@ -21,8 +21,8 @@ class SsmCredentialsProviderTest {
     void SecureString_을_캐싱하고_2회차는_SSM을_호출하지_않는다() {
         SsmClient client = mock(SsmClient.class);
         Function<String, String> values = name -> switch (name) {
-            case "/stockportfolio/api/appkey" -> "K";
-            case "/stockportfolio/api/appsecret" -> "S";
+            case "/portfolio/kis/app-key" -> "K";
+            case "/portfolio/kis/app-secret" -> "S";
             default -> throw new IllegalArgumentException(name);
         };
         when(client.getParameter(any(GetParameterRequest.class)))
@@ -35,8 +35,8 @@ class SsmCredentialsProviderTest {
                 });
         SsmCredentialsProvider provider = new SsmCredentialsProvider(
                 client,
-                "/stockportfolio/api/appkey",
-                "/stockportfolio/api/appsecret");
+                "/portfolio/kis/app-key",
+                "/portfolio/kis/app-secret");
 
         KisCredentialsProvider.KisCredentials first = provider.get();
         KisCredentialsProvider.KisCredentials second = provider.get();
