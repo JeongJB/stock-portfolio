@@ -67,10 +67,54 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - 백업/내보내기.
 5. **P2 후속**: FE-6 거래 내역 표(GSI1 도입 후), FE-7 다크모드/접근성/모바일 레이아웃, recharts 청크 분할 등 성능 미세 조정.
 
-### 운영 1회 수동 작업
+### 운영/로컬 dev 1회 수동 작업
 
-- **DynamoDB TTL 활성화**: AWS 콘솔에서 `Portfolio` 테이블의 TTL 속성을 `ttl`로 활성화. 활성화 전에도 시세 캐시 hit/miss 로직은 정상 동작하나 만료 항목이 청소되지 않아 누적 비용이 점진적으로 증가.
-- **API key·KIS 시크릿 등록**: API Gateway API key, SSM Parameter Store에 KIS appkey/appsecret 등록(파라미터 이름은 `application.properties`의 `kis.appkey-parameter` / `kis.appsecret-parameter` 기본값 또는 환경변수 오버라이드).
+dev 환경에서도 실 AWS DynamoDB·SSM을 그대로 사용하므로 본 작업 1회 수행 후 `backend/gradlew -p backend bootRun` 이 정상 기동한다. 자격 증명이 없으면 `SdkClientException: Unable to load credentials from any of the providers in the chain` 발생.
+
+#### 1. AWS 자격 증명 등록 (1회)
+
+```bash
+brew install awscli   # 없으면
+aws configure         # IAM 사용자 access key 입력, region=ap-northeast-2
+aws sts get-caller-identity  # 검증
+```
+
+IAM 사용자에 최소 권한 정책: `dynamodb:*Item` / `dynamodb:Query` on `Portfolio` 테이블 + `ssm:GetParameter` / `ssm:GetParameters` on `/stockportfolio/api/*`.
+
+#### 2. DynamoDB 테이블 + TTL 생성
+
+```bash
+aws dynamodb create-table \
+  --table-name Portfolio \
+  --attribute-definitions AttributeName=pk,AttributeType=S AttributeName=sk,AttributeType=S \
+  --key-schema AttributeName=pk,KeyType=HASH AttributeName=sk,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST
+
+aws dynamodb update-time-to-live \
+  --table-name Portfolio \
+  --time-to-live-specification "Enabled=true, AttributeName=ttl"
+```
+
+- 속성명 `pk` / `sk` 는 `DynamoAttributes.PK` / `SK` 상수와 정확히 일치해야 한다.
+- TTL 미활성 상태에서도 캐시 hit/miss 로직은 정상 동작하나 만료 항목이 청소되지 않아 누적 비용이 점진적으로 증가.
+- 1인 사용량은 PAY_PER_REQUEST 무료 티어 안에 들어온다.
+
+#### 3. SSM Parameter Store 에 KIS 시크릿 등록
+
+한국투자증권 OpenAPI 사이트(개인 실전계좌)에서 발급받은 appkey / appsecret 을 등록:
+
+```bash
+aws ssm put-parameter --name /stockportfolio/api/appkey \
+  --value 'YOUR_KIS_APPKEY' --type SecureString
+aws ssm put-parameter --name /stockportfolio/api/appsecret \
+  --value 'YOUR_KIS_APPSECRET' --type SecureString
+```
+
+파라미터 경로를 바꾸려면 `application.properties` 의 `kis.appkey-parameter` / `kis.appsecret-parameter` 또는 환경변수(`KIS_APPKEY_PARAMETER` / `KIS_APPSECRET_PARAMETER`)로 오버라이드.
+
+#### 4. (운영 배포 시점에만) API Gateway API key
+
+dev 환경에서는 백엔드 직접 호출이라 불필요. FE-5 배포 단계에서 등록.
 
 ### 재개 시 첫 명령
 
