@@ -1,33 +1,32 @@
 package com.example.stockportfolio.adapter.web.dto;
 
-import com.example.stockportfolio.domain.Portfolio;
 import tools.jackson.databind.annotation.JsonSerialize;
 import tools.jackson.databind.ser.std.ToStringSerializer;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.Map;
 
+/**
+ * 포트폴리오 평가 응답. USD를 기준으로 계산하고 KRW 환산값을 함께 싣는다.
+ * weight 합계(positions + cashWeight) = 1.0 (시세 실패 종목 제외).
+ */
 public record PortfolioView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashKrw,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashWeight,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal principalUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal principalKrw,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal cumulativeDepositUsd,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal cumulativeWithdrawUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalMarketValueUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalMarketValueKrw,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalCostBasisUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalCostBasisKrw,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlKrw,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal usdKrwRate,
+        OffsetDateTime asOf,
         List<PositionView> positions
 ) {
-
-    public static PortfolioView from(Portfolio portfolio) {
-        // ticker 사전순으로 정렬 — 응답 안정성을 위해 (HashMap 순서 의존 회피)
-        List<PositionView> positions = portfolio.positions().entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(e -> PositionView.from(e.getValue()))
-                .toList();
-
-        return new PortfolioView(
-                portfolio.cashUsd().amount(),
-                portfolio.principal().amount(),
-                portfolio.cumulativeDeposit().amount(),
-                portfolio.cumulativeWithdraw().amount(),
-                positions);
-    }
 }

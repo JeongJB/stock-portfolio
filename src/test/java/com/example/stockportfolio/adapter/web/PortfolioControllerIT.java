@@ -1,8 +1,14 @@
 package com.example.stockportfolio.adapter.web;
 
+import com.example.stockportfolio.domain.Currency;
+import com.example.stockportfolio.domain.Exchange;
+import com.example.stockportfolio.domain.MarketDataPort;
+import com.example.stockportfolio.domain.Money;
 import com.example.stockportfolio.domain.PortfolioRepository;
+import com.example.stockportfolio.domain.Quote;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -16,8 +22,14 @@ import org.springframework.web.context.WebApplicationContext;
 
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.matchesPattern;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -25,18 +37,30 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 컨트롤러 IT: DynamoDbClient는 MockitoBean으로 무력화하고, PortfolioRepository는 인메모리 fake로 교체.
- * MockMvc는 standalone이 아닌 WebApplicationContext 기반으로 띄워 ExceptionHandler까지 동작시킨다.
+ * MarketDataPort도 stub로 갈음해 외부 호출 없이 동작하도록 한다.
  */
 @SpringBootTest
 class PortfolioControllerIT {
 
+    private static final BigDecimal STUB_RATE = new BigDecimal("1400");
+
     @TestConfiguration
     static class TestConfig {
-        // 같은 이름의 DynamoDbConfig#portfolioRepository와 충돌하지 않도록 다른 빈 이름 사용
         @Bean
         @Primary
         PortfolioRepository inMemoryPortfolioRepository() {
             return new InMemoryPortfolioRepository();
+        }
+
+        @Bean
+        @Primary
+        MarketDataPort stubMarketDataPort() {
+            MarketDataPort mock = Mockito.mock(MarketDataPort.class);
+            Mockito.when(mock.getUsdKrwRate()).thenReturn(STUB_RATE);
+            Mockito.when(mock.getQuote(eq("AAPL"), any(Exchange.class)))
+                    .thenAnswer(inv -> new Quote("AAPL", Exchange.NAS,
+                            Money.of("200", Currency.USD), Instant.parse("2026-04-28T00:00:00Z")));
+            return mock;
         }
     }
 
@@ -54,7 +78,6 @@ class PortfolioControllerIT {
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
-        // 컨텍스트가 캐싱되므로 테스트 간 fake state를 격리하기 위해 매번 리셋한다
         ((InMemoryPortfolioRepository) repository).reset();
         mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
     }
@@ -76,6 +99,12 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.principalUsd").value("1000.0000"))
                 .andExpect(jsonPath("$.cumulativeDepositUsd").value("1000.0000"))
                 .andExpect(jsonPath("$.cumulativeWithdrawUsd").value("0.0000"))
+                // 현금만 있는 경우 cashWeight = 1.0
+                .andExpect(jsonPath("$.cashWeight").value("1.000000"))
+                .andExpect(jsonPath("$.cashKrw").value("1400000.0000"))
+                .andExpect(jsonPath("$.principalKrw").value("1400000.0000"))
+                .andExpect(jsonPath("$.usdKrwRate").value("1400"))
+                .andExpect(jsonPath("$.totalMarketValueUsd").value("0.0000"))
                 .andExpect(jsonPath("$.positions", hasSize(0)));
     }
 
@@ -103,7 +132,29 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.positions", hasSize(1)))
                 .andExpect(jsonPath("$.positions[0].ticker").value("AAPL"))
                 .andExpect(jsonPath("$.positions[0].qty").value("10.000000"))
-                .andExpect(jsonPath("$.positions[0].avgCostUsd").value("150.0000"));
+                .andExpect(jsonPath("$.positions[0].avgCostUsd").value("150.0000"))
+                // 시세 stub: 200 USD → 평가액 2000, 미실현손익 (200-150)*10 = 500
+                .andExpect(jsonPath("$.positions[0].lastPriceUsd").value("200.0000"))
+                .andExpect(jsonPath("$.positions[0].lastPriceKrw").value("280000.0000"))
+                .andExpect(jsonPath("$.positions[0].marketValueUsd").value("2000.0000"))
+                .andExpect(jsonPath("$.positions[0].marketValueKrw").value("2800000.0000"))
+                .andExpect(jsonPath("$.positions[0].unrealizedPnlUsd").value("500.0000"))
+                .andExpect(jsonPath("$.positions[0].unrealizedPnlKrw").value("700000.0000"))
+                // weight: 2000 / (2000 + 8499) = 0.190494
+                .andExpect(jsonPath("$.positions[0].weight").value("0.190494"))
+                // cashWeight: 8499 / 10499 = 0.809506
+                .andExpect(jsonPath("$.cashWeight").value("0.809506"))
+                .andExpect(jsonPath("$.totalMarketValueUsd").value("2000.0000"))
+                .andExpect(jsonPath("$.totalCostBasisUsd").value("1500.0000"))
+                .andExpect(jsonPath("$.totalUnrealizedPnlUsd").value("500.0000"));
+    }
+
+    @Test
+    void GET_portfolio_응답에_asOf와_KST_오프셋이_포함된다() throws Exception {
+        mockMvc.perform(get("/api/portfolio"))
+                .andExpect(status().isOk())
+                // KST = +09:00. ISO-8601 OffsetDateTime 표현
+                .andExpect(jsonPath("$.asOf", matchesPattern("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*\\+09:00$")));
     }
 
     @Test
@@ -145,12 +196,13 @@ class PortfolioControllerIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cashUsd").value("0.0000"))
                 .andExpect(jsonPath("$.principalUsd").value("0.0000"))
-                .andExpect(jsonPath("$.positions", hasSize(0)));
+                .andExpect(jsonPath("$.positions", hasSize(0)))
+                // 분모 0인 경우 weight 0
+                .andExpect(jsonPath("$.cashWeight").value("0.000000"));
     }
 
     @Test
     void GET_trades_limit2는_최신_2건을_역순으로_반환한다() throws Exception {
-        // 3건 등록 (executedAt 명시)
         mockMvc.perform(post("/api/trades")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
@@ -180,4 +232,5 @@ class PortfolioControllerIT {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("bad_request"));
     }
+
 }
