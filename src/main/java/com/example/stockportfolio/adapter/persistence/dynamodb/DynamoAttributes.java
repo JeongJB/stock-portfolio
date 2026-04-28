@@ -26,6 +26,9 @@ import java.util.Map;
 
 /**
  * 도메인 ↔ DynamoDB AttributeValue 매핑 헬퍼. 어댑터 내부 전용.
+ *
+ * NOTE: 시세 캐시(QUOTE#&lt;date&gt;)는 `ttl` 속성(epoch second Number)으로 자동 만료된다.
+ * AWS 콘솔에서 `Portfolio` 테이블의 TTL 속성으로 `ttl` 을 활성화해야 실제 만료가 동작한다.
  */
 final class DynamoAttributes {
 
@@ -38,6 +41,9 @@ final class DynamoAttributes {
     static final String CASH_USD_SK = "CASH#USD";
     static final String META_SK = "META#PORTFOLIO";
     static final String SNAPSHOT_SK_PREFIX = "SNAPSHOT#";
+    static final String TICKER_PK_PREFIX = "TICKER#";
+    static final String QUOTE_SK_PREFIX = "QUOTE#";
+    static final String TTL_ATTR = "ttl";
 
     // positions 직렬화 전용. JSON 컬럼만 다루므로 모듈 추가는 불필요.
     private static final ObjectMapper SNAPSHOT_MAPPER = JsonMapper.builder().build();
@@ -256,5 +262,37 @@ final class DynamoAttributes {
 
     private static BigDecimal toDecimal(Object v) {
         return v == null ? null : new BigDecimal(v.toString());
+    }
+
+    static String tickerPk(String ticker) {
+        return TICKER_PK_PREFIX + ticker;
+    }
+
+    static String quoteSk(LocalDate kstDate) {
+        return QUOTE_SK_PREFIX + kstDate.toString();
+    }
+
+    static Map<String, AttributeValue> quoteItem(
+            com.example.stockportfolio.domain.Quote quote,
+            LocalDate kstDate,
+            long ttlEpochSecond) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(PK, s(tickerPk(quote.ticker())));
+        item.put(SK, s(quoteSk(kstDate)));
+        item.put("ticker", s(quote.ticker()));
+        item.put("exchange", s(quote.exchange().name()));
+        item.put("priceUsd", n(quote.price().amount()));
+        item.put("asOf", s(quote.asOf().toString()));
+        item.put(TTL_ATTR, AttributeValue.fromN(Long.toString(ttlEpochSecond)));
+        return item;
+    }
+
+    static com.example.stockportfolio.domain.Quote quoteFromItem(Map<String, AttributeValue> item) {
+        String ticker = item.get("ticker").s();
+        com.example.stockportfolio.domain.Exchange exchange =
+                com.example.stockportfolio.domain.Exchange.valueOf(item.get("exchange").s());
+        Money price = new Money(new BigDecimal(item.get("priceUsd").n()), Currency.USD);
+        Instant asOf = Instant.parse(item.get("asOf").s());
+        return new com.example.stockportfolio.domain.Quote(ticker, exchange, price, asOf);
     }
 }

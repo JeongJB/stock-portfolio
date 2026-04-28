@@ -67,7 +67,7 @@ public class KisMarketDataConfig {
     }
 
     @Bean
-    public MarketDataPort marketDataPort(
+    public KisMarketDataAdapter kisMarketDataAdapter(
             KisHttpClient kisHttpClient,
             RestClient kisRestClient,
             @Value("${exchangerate.host-url:https://api.exchangerate.host}") String exchangeRateHostUrl,
