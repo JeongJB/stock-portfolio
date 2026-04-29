@@ -64,7 +64,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 다음 단계 (재개 시 이 순서)
 
-1. **FE-5e 자동 배포 (남은 P1-FE)**: GitHub Actions 워크플로 — 백엔드는 `shadowJar` → `sam deploy`, 프론트는 `npm --prefix frontend run build` → S3 sync → CloudFront invalidate. 운영 가이드/체크리스트는 [docs/deploy.md](docs/deploy.md) 와 [infra/README.md](infra/README.md) 참조. (FE-5a/b/c/f 는 완료.)
+1. **FE-5e GitHub Actions 자동 배포 (남은 P1-FE)**:
+   - **워크플로 분리**: `.github/workflows/backend-deploy.yml`(`backend/**`·`infra/template.yaml` 변경 시), `.github/workflows/frontend-deploy.yml`(`frontend/**`·`infra/deploy-frontend.sh` 변경 시). path filter + `workflow_dispatch` 수동 트리거.
+   - **OIDC 기반 AWS 자격증명**: GitHub Actions OIDC provider(`token.actions.githubusercontent.com`)를 IAM 에 등록하고, 두 워크플로가 assume 할 IAM Role 1개를 trust policy 로 이 저장소(`repo:<owner>/<repo>:ref:refs/heads/master`)에 한정. **장기 액세스 키 미사용** — Secrets 에 `AWS_ROLE_ARN`만 둔다.
+   - **백엔드 워크플로**: `actions/setup-java@v4` (Corretto 25, gradle 캐시) → `backend/gradlew -p backend test` → `shadowJar` → `aws-actions/configure-aws-credentials@v4` (OIDC) → `cd infra && sam deploy --no-confirm-changeset --no-fail-on-empty-changeset`. KIS 시크릿은 SSM 에 이미 박제돼 워크플로에서 다루지 않음.
+   - **프론트 워크플로**: `actions/setup-node@v4` (npm 캐시) → AWS configure (OIDC) → CloudFormation Outputs 에서 `BackendApiInvokeUrl` 추출 + API Gateway 에서 `API_KEY` 추출 → `VITE_API_BASE_URL`/`VITE_API_KEY` env 로 빌드 → `infra/deploy-frontend.sh` 호출. **`VITE_API_KEY` 는 Secrets 에 저장하지 않고** 워크플로 런타임에 즉시 추출(회전 시 재배포만 하면 자동 갱신).
+   - **PR 정책**: master push + workflow_dispatch 만 배포. PR 에는 빌드/테스트만 돌리고 배포 안 함(별도 `pr-check.yml` 또는 같은 워크플로의 조건 분기).
+   - **검증**: 첫 master push 가 자동 트리거 → CloudFormation 콘솔에서 changeset 적용 확인. `aws lambda get-function --function-name stock-portfolio-prod-api --query 'Configuration.LastModified'` 로 갱신 시각 확인.
+   - **대안 / 보류**: 캐시 무효화/시크릿 회전 같은 운영 1회 작업까지 워크플로에 묶지 않는다 — 1인용엔 과함. 운영 가이드는 [docs/deploy.md](docs/deploy.md) / [infra/README.md](infra/README.md) 그대로.
 2. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
    - EOD 자동 스냅샷 — EventBridge cron + Lambda 핸들러(`takeSnapshot()` 재사용).
    - 종목 마스터(`TICKER#<sym>/META`) + GSI1 종목별 거래 조회 — 다거래소(NYSE/NAS/AMS) 자동 탐색·저장 방식. **사용자는 ticker만 입력**하고, 백엔드가 첫 매수 거래 처리 시 NAS → NYS → AMS 순으로 KIS 시세 조회를 시도해 가장 먼저 성공한 거래소를 META에 박제. 이후 시세 조회는 META의 거래소를 그대로 사용해 1콜로 끝낸다. 거래소 탐색 결과는 종목별로 한 번만 결정되므로 비용·지연 영향 미미. (현재 GEV 같은 NYSE 종목이 NAS 고정 조회로 시세 미조회되는 문제를 동시에 해소.)
@@ -72,13 +79,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
    - 백업/내보내기.
-   - application.properties를 application.yml 형태로 변경하기.
+   - `application.properties` 를 `application.yml` 형태로 변경 — 환경별 분기 쉬워짐. FE-5e 와는 독립.
 3. **P2 후속**:
    - FE-6 거래 내역 표(GSI1 도입 후).
    - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.
    - FE-8 매수 폼 기존 종목 빠른 추가매수 — 신규 매수와 추가 매수가 모두 빈번하므로 ticker 자유 입력은 유지하되, 보유 종목을 한눈에 보여주는 select/자동완성을 같은 폼에서 토글 가능하게 노출. 기존 종목 선택 시 ticker 자동 채움 + 평균단가·수량 힌트로 추가매수 입력 부담 감소(가격·수량은 이번 거래 값이라 비워둠).
    - FE-9 다크모드/접근성/모바일 레이아웃.
    - recharts 청크 분할 등 성능 미세 조정.
+   - SnapStart 적용 검토 — 현재 콜드 스타트 5~10초 수용 중. 1인용 빈도엔 체감 거슬리지 않음 → 우선순위 낮음.
+   - X-Ray / 추가 알람(요청량·throttle 메트릭) — 1인용엔 과함. 정말 필요해질 때만.
+
+### 운영 1회 작업 (FE-5e 진행 전 사용자가 처리할 것)
+
+- GitHub OIDC provider 등록(없으면 신규): `aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com`
+- 워크플로 전용 IAM Role 생성 + trust policy 에 저장소·브랜치 한정 sub claim 박제. 권한은 SAM 배포에 필요한 cloudformation/lambda/apigateway/s3/dynamodb/iam:PassRole 등 (자세한 권한 묶음은 [infra/README.md](infra/README.md) "사전 IAM 권한" 섹션 또는 FE-5e 발주 시 정리).
+- 저장소 `Settings → Secrets and variables → Actions` 에 `AWS_ROLE_ARN` 1개만 등록.
 
 ## 기술 스택
 
