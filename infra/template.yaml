@@ -71,6 +71,15 @@ Parameters:
     Description: >-
       SNS 이메일 알람 수신 주소. 첫 배포 직후 받은편지함에서 "Confirm subscription"
       링크를 1회 클릭해야 알람이 실제 메일로 도달한다.
+  BasicAuthHash:
+    Type: String
+    NoEcho: true
+    Description: >-
+      프론트엔드 CloudFront Basic Auth 의 SHA-256 hex
+      (sha256 of literal "Basic <base64(user:pass)>"). repo/template 에 박지 않고
+      SSM SecureString /portfolio/cloudfront/basic-auth-hash 에서 deploy 시점 주입한다.
+      운영 wrapper `infra/deploy.sh` 가 SSM 에서 읽어 --parameter-overrides 로 전달.
+      회전은 SSM 값만 갱신 후 `infra/deploy.sh` 재실행 (template 변경 불필요).
 
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
@@ -340,6 +349,11 @@ Resources:
   #   CloudFront 가 403/404 를 반환한다. Custom Error Response 매핑 대신 CloudFront Functions
   #   로 viewer-request 단계에서 확장자 없는 경로를 /index.html 로 리라이트한다.
   #   /api/ 경로는 이 분포에 매핑되지 않지만 안전 장치로 제외.
+  # CloudFront viewer-request 함수 — 한 cache behavior 에 함수 1개만 attach 가능하므로
+  # Basic Auth 게이트 + SPA 라우팅 리라이트를 한 함수에 합쳐 둔다.
+  # EXPECTED_HASH 는 sha256("Basic <base64(user:pass)>") 의 hex.
+  # template/repo 에 평문·base64·해시가 박히지 않도록 BasicAuthHash 파라미터로
+  # 받아 Fn::Sub 로 주입한다 (값 자체는 SSM SecureString 보관, deploy.sh 가 전달).
   FrontendSpaRouter:
     Type: AWS::CloudFront::Function
     Properties:
@@ -347,23 +361,47 @@ Resources:
       AutoPublish: true
       FunctionConfig:
         Runtime: cloudfront-js-2.0
-        Comment: SPA 라우팅용 viewer-request 리라이트
-      FunctionCode: |
+        Comment: Basic Auth 게이트 + SPA viewer-request 리라이트
+      FunctionCode: !Sub |
+        import cf from 'cloudfront';
+
+        var EXPECTED_HASH = '${BasicAuthHash}';
+        var REALM = 'Stock Portfolio';
+
         function handler(event) {
           var request = event.request;
+          var headers = request.headers;
+
+          var auth = headers.authorization && headers.authorization.value;
+          if (!auth) {
+            return unauthorized();
+          }
+          var hash = cf.crypto.createHash('sha256').update(auth).digest('hex');
+          if (hash !== EXPECTED_HASH) {
+            return unauthorized();
+          }
+
+          // 인증 통과 → 기존 SPA 라우팅 리라이트.
           var uri = request.uri;
-          // /api/ 경로는 별도 origin (이 분포엔 없음) — 방어적으로 우회.
           if (uri.indexOf('/api/') === 0) {
             return request;
           }
-          // 마지막 segment 에 '.' (확장자) 가 있으면 정적 파일 → 그대로.
           var lastSegment = uri.substring(uri.lastIndexOf('/') + 1);
           if (lastSegment.indexOf('.') !== -1) {
             return request;
           }
-          // 확장자 없는 경로 (예: /, /trades, /snapshots) → SPA 진입점으로 리라이트.
           request.uri = '/index.html';
           return request;
+        }
+
+        function unauthorized() {
+          return {
+            statusCode: 401,
+            statusDescription: 'Unauthorized',
+            headers: {
+              'www-authenticate': { value: 'Basic realm="' + REALM + '"' }
+            }
+          };
         }
 
   FrontendDistribution:

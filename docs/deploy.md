@@ -4,9 +4,11 @@
 
 ## 한 줄 요약
 
-- **백엔드 코드 변경** → `backend/gradlew -p backend shadowJar` → `cd infra && sam deploy`
+- **백엔드 코드 변경** → `backend/gradlew -p backend shadowJar` → `infra/deploy.sh`
 - **프론트엔드 변경** → `npm --prefix frontend run build` (env 주입) → `infra/deploy-frontend.sh`
-- **인프라 (template.yaml) 변경** → `cd infra && sam deploy`
+- **인프라 (template.yaml) 변경** → `infra/deploy.sh`
+
+> `infra/deploy.sh` 는 SSM SecureString `/portfolio/cloudfront/basic-auth-hash` 에 보관된 Basic Auth 해시를 deploy 시점에 `--parameter-overrides` 로 주입하는 wrapper 다 (template/repo 에 해시가 박히지 않도록). 직접 `sam deploy` 를 호출하면 `BasicAuthHash` 파라미터가 비어 배포 실패 — 항상 wrapper 사용.
 
 ## 환경
 
@@ -50,7 +52,7 @@ export DIST=$(aws cloudformation describe-stacks --stack-name $STACK --region $R
 ```bash
 # 백엔드
 backend/gradlew -p backend shadowJar
-cd infra && sam deploy
+infra/deploy.sh
 
 # 프론트엔드 (env 주입 필수)
 VITE_API_BASE_URL=$API_URL VITE_API_KEY=$API_KEY \
@@ -85,9 +87,71 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 | `LogGroup ... already exists` | Lambda 가 첫 호출 시 자동 생성한 로그 그룹과 CFN 정의 충돌 | `aws logs delete-log-group --log-group-name /aws/lambda/stock-portfolio-prod-api --region $REGION` 후 `sam deploy` 재시도 |
 | 알람 메일이 오지 않음 | SNS email 구독이 PendingConfirmation 상태 | `surpatience@gmail.com` 받은편지함에서 "Confirm subscription" 링크 클릭 (스팸함도 확인) |
 
+## 프론트엔드 Basic Auth ID/PW 변경
+
+프론트엔드 진입은 CloudFront Function (`FrontendSpaRouter`) 의 viewer-request 단계에서 Basic Auth 게이트를 통과해야 한다. **자격증명 자체는 어디에도 박지 않는다** — SHA-256 해시만 SSM SecureString `/portfolio/cloudfront/basic-auth-hash` 에 두고, `infra/deploy.sh` 가 deploy 시점에 `BasicAuthHash` 파라미터로 주입한다. 함수는 viewer-request 마다 들어온 `Authorization` 헤더 전체를 sha256 해시 후 비교한다.
+
+### 최초 1회 설정
+
+```bash
+USER="june"
+PASS="<INITIAL_PASSWORD>"
+TOKEN=$(printf '%s' "$USER:$PASS" | base64)
+HASH=$(printf '%s' "Basic $TOKEN" | shasum -a 256 | awk '{print $1}')
+
+aws ssm put-parameter \
+  --name /portfolio/cloudfront/basic-auth-hash \
+  --type SecureString \
+  --value "$HASH" \
+  --region ap-northeast-2
+
+infra/deploy.sh
+```
+
+평문 비밀번호는 1Password 등 비밀번호 매니저에 별도 보관. AWS 어디에도 평문은 없고, template/repo 에도 박혀 있지 않다.
+
+### 비밀번호 회전
+
+```bash
+USER="june"
+PASS="<NEW_PASSWORD>"
+TOKEN=$(printf '%s' "$USER:$PASS" | base64)
+HASH=$(printf '%s' "Basic $TOKEN" | shasum -a 256 | awk '{print $1}')
+
+aws ssm put-parameter \
+  --name /portfolio/cloudfront/basic-auth-hash \
+  --type SecureString \
+  --value "$HASH" \
+  --overwrite \
+  --region ap-northeast-2
+
+infra/deploy.sh
+```
+
+template/코드 변경 0줄. SSM 갱신 + deploy 한 번이면 끝.
+
+### 전파/캐시 주의
+
+- CloudFront Function 갱신은 보통 1~5분 안에 모든 edge 에 반영됨.
+- 브라우저는 도메인별 자격증명을 **세션** 동안 캐시하므로 변경 직후 다이얼로그가 안 뜰 수 있다. 시크릿 창 또는 `Cmd+Shift+R` 강제 새로고침으로 검증.
+- macOS Keychain / 1Password 등 옛 자격증명이 자동 입력될 수 있어 새 PW 입력 시 함께 갱신 권장.
+
+### 검증 (브라우저 캐시 영향 없는 curl)
+
+```bash
+FRONTEND_URL=$(aws cloudformation describe-stacks --stack-name $STACK --region $REGION \
+  --query 'Stacks[0].Outputs[?OutputKey==`FrontendUrl`].OutputValue' --output text)
+
+curl -I "$FRONTEND_URL/"                       # 401 + WWW-Authenticate: Basic ... 정상
+curl -I -u "$USER:$PASS" "$FRONTEND_URL/"      # 200 정상
+curl -I -u "wrong:wrong" "$FRONTEND_URL/"      # 401 정상
+```
+
+> 비밀번호 분실 시 SSM 에 새 해시를 넣고 deploy 하면 곧 새 PW 설정. 옛 PW 는 해시만 남아 brute force 외엔 복구 불가 (16자 랜덤이면 사실상 불가능).
+
 ## 롤백
 
-- **백엔드**: 직전 git commit 체크아웃 → `backend/gradlew -p backend shadowJar` → `cd infra && sam deploy`
+- **백엔드**: 직전 git commit 체크아웃 → `backend/gradlew -p backend shadowJar` → `infra/deploy.sh`
 - **프론트엔드**: S3 versioning 으로 객체 단위 복원 + CloudFront invalidate. 절차는 [infra/README.md](../infra/README.md) "프론트엔드 롤백" 섹션 참고
 
 ## 해서는 안 되는 것

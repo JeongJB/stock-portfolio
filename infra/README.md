@@ -18,9 +18,11 @@
 - 리전: `ap-northeast-2` (Seoul)
 - **JDK** — Gradle toolchain 이 자동 프로비저닝하므로 시스템 JDK 가 낮아도 무방. 첫 실행 시 JDK 25 다운로드로 수 분 소요될 수 있음.
 
-## 1회 수동 작업 — KIS 시크릿 SSM 등록
+## 1회 수동 작업 — 시크릿 SSM 등록
 
-SAM template 은 SSM 파라미터 ARN 만 IAM 정책에 참조한다. **시크릿 값 자체는 사용자가 콘솔/CLI 로 사전 생성**해야 한다 (코드/스택에 시크릿이 박제되지 않도록).
+SAM template 은 시크릿 값 자체를 박지 않고 SSM SecureString 경로만 참조한다. 값은 사용자가 1회 등록한다.
+
+### KIS appkey/appsecret
 
 ```bash
 aws ssm put-parameter \
@@ -36,7 +38,24 @@ aws ssm put-parameter \
   --region ap-northeast-2
 ```
 
-값 갱신 시 `--overwrite` 추가.
+### 프론트엔드 Basic Auth 해시
+
+`infra/deploy.sh` 가 deploy 시점에 SSM 에서 읽어 `BasicAuthHash` 파라미터로 주입한다. 평문 비밀번호는 어디에도 저장되지 않고 SHA-256 해시만 SSM 에 보관.
+
+```bash
+USER="june"
+PASS="<INITIAL_PASSWORD>"
+TOKEN=$(printf '%s' "$USER:$PASS" | base64)
+HASH=$(printf '%s' "Basic $TOKEN" | shasum -a 256 | awk '{print $1}')
+
+aws ssm put-parameter \
+  --name /portfolio/cloudfront/basic-auth-hash \
+  --type SecureString \
+  --value "$HASH" \
+  --region ap-northeast-2
+```
+
+값 갱신 시 `--overwrite` 추가. 회전 절차 상세는 [docs/deploy.md](../docs/deploy.md) "프론트엔드 Basic Auth ID/PW 변경" 섹션 참조.
 
 ## 기존 `Portfolio` 테이블 충돌 처리
 
@@ -68,14 +87,20 @@ backend/gradlew -p backend shadowJar
 cd infra
 sam validate --region ap-northeast-2
 
-# 3. 첫 배포 — guided 모드 (samconfig.toml 디폴트 그대로 진행 가능)
-sam deploy --guided
+# 3. 첫 배포 — guided 모드는 직접 sam deploy --guided 로 1회 실행해 samconfig.toml 채운 뒤
+#    이후엔 deploy.sh wrapper 사용 (BasicAuthHash 가 SSM 에서 자동 주입돼야 함).
+#    guided 단계에서 BasicAuthHash 도 SSM 에서 한 번 꺼내 입력해야 한다.
+HASH=$(aws ssm get-parameter --name /portfolio/cloudfront/basic-auth-hash \
+  --with-decryption --region ap-northeast-2 --query 'Parameter.Value' --output text)
+sam deploy --guided --parameter-overrides "BasicAuthHash=$HASH"
 
-# 4. 이후 배포
-sam deploy
+# 4. 이후 배포 — wrapper 가 SSM 에서 자동 주입
+./deploy.sh   # 또는 repo 루트에서 infra/deploy.sh
 ```
 
 > `sam build` 는 SAM 의 Java 빌드 워커플로(Maven/Gradle 자동 실행)를 사용하지 않고 **이미 빌드된 JAR 를 그대로 패키징**하는 방식이다. CodeUri 가 단일 JAR 파일을 가리키면 SAM 은 그 JAR 만 zip 으로 감싸 S3 에 업로드한다. `sam build` 호출 없이 `sam deploy` 로 직행해도 무방.
+
+> `BasicAuthHash` 파라미터는 default 값이 없으므로 직접 `sam deploy` 만 실행하면 changeset 생성이 실패한다. 항상 `infra/deploy.sh` 를 사용하거나, 수동으로 `--parameter-overrides "BasicAuthHash=<해시>"` 를 전달해야 한다.
 
 ## 배포 후 검증
 
