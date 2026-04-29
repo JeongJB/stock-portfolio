@@ -1,0 +1,486 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Stock Portfolio (prod) - backend Lambda + API Gateway + DynamoDB +
+  frontend S3/CloudFront. FE-5b 에서 백엔드, FE-5c 에서 프론트엔드 정적 호스팅(S3 + CloudFront + OAC) 활성화.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    Description: 배포 환경 식별자. 현재는 prod 단일 운영.
+  TableName:
+    Type: String
+    Default: Portfolio
+    Description: DynamoDB 단일 테이블 이름. 백엔드 portfolio.table-name 디폴트와 일치.
+  KisAppKeyParameter:
+    Type: String
+    Default: /portfolio/kis/app-key
+    Description: KIS appkey 가 보관된 SSM Parameter Store 경로 (SecureString, 사용자 사전 생성).
+  KisAppSecretParameter:
+    Type: String
+    Default: /portfolio/kis/app-secret
+    Description: KIS appsecret 이 보관된 SSM Parameter Store 경로 (SecureString, 사용자 사전 생성).
+  LambdaMemoryMb:
+    Type: Number
+    Default: 1024
+    Description: Lambda 메모리 (MB). Spring Boot 콜드 스타트를 줄이기 위해 1024 시작.
+  LambdaTimeoutSeconds:
+    Type: Number
+    Default: 30
+    Description: Lambda 타임아웃 (초). API Gateway REST API 의 29초 한계와 정렬.
+  ApiThrottleRateLimit:
+    Type: Number
+    Default: 10
+    Description: Usage plan 의 정상 RPS. 1인용엔 충분.
+  ApiThrottleBurstLimit:
+    Type: Number
+    Default: 20
+    Description: Usage plan 의 burst 한도.
+  ApiQuotaPerDay:
+    Type: Number
+    Default: 5000
+    Description: Usage plan 의 1일 quota.
+  FrontendBucketName:
+    Type: String
+    Default: ''
+    Description: >-
+      프론트엔드 정적 자산용 S3 버킷 이름. 비우면 CloudFormation 이 자동 생성한다.
+      S3 버킷 이름은 글로벌 유니크 제약이 있으므로 명시 시 충돌 가능성 주의.
+  CloudFrontPriceClass:
+    Type: String
+    Default: PriceClass_200
+    AllowedValues:
+      - PriceClass_100
+      - PriceClass_200
+      - PriceClass_All
+    Description: >-
+      CloudFront 분포의 edge price class. 한국 사용자 latency 를 고려해 KR/JP edge 를
+      포함하는 PriceClass_200 을 디폴트로 한다 (PriceClass_100 은 KR edge 미포함).
+      비용을 더 낮추려면 PriceClass_100 으로 override 가능.
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365]
+    Description: >-
+      Lambda CloudWatch Logs 보존 기간(일). 1인용 운영에는 14일이면 충분하며 비용도
+      거의 발생하지 않는다. CloudWatch Logs 가 허용하는 표준 옵션값만 노출.
+  AlarmEmail:
+    Type: String
+    Default: surpatience@gmail.com
+    Description: >-
+      SNS 이메일 알람 수신 주소. 첫 배포 직후 받은편지함에서 "Confirm subscription"
+      링크를 1회 클릭해야 알람이 실제 메일로 도달한다.
+
+Conditions:
+  HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
+
+Resources:
+  PortfolioTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      # 코드(DynamoAttributes.java)가 attribute 이름을 소문자로 사용한다 (pk/sk/gsi1pk/gsi1sk).
+      # DynamoDB 는 대소문자 구분이라 KeySchema 와 일치시키지 않으면
+      # "Query condition missed key schema element" 가 발생한다.
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub stock-portfolio-${Stage}-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: PortfolioTableAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:ConditionCheckItem
+                Resource:
+                  - !GetAtt PortfolioTable.Arn
+                  - !Sub ${PortfolioTable.Arn}/index/GSI1
+        - PolicyName: KisSsmAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KisAppKeyParameter}
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KisAppSecretParameter}
+
+  BackendApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub stock-portfolio-${Stage}
+      StageName: !Ref Stage
+      EndpointConfiguration:
+        Type: REGIONAL
+      # SAM 이 OPTIONS preflight 메서드를 Mock integration 으로 자동 생성한다.
+      # OPTIONS 는 ApiKeyRequired 자동 면제 (브라우저가 preflight 에 커스텀 헤더 안 붙임).
+      # AllowOrigin 은 1인용이라 '*' 로 단순화. 실제 응답 본문의 CORS 헤더는 Lambda 가 직접 부착.
+      Cors:
+        AllowOrigin: "'*'"
+        AllowHeaders: "'Content-Type,x-api-key'"
+        AllowMethods: "'GET,POST,PUT,DELETE,PATCH,OPTIONS'"
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          UsagePlanName: !Sub stock-portfolio-${Stage}-usage-plan
+          Description: 1인 사용 throttle/quota
+          Throttle:
+            BurstLimit: !Ref ApiThrottleBurstLimit
+            RateLimit: !Ref ApiThrottleRateLimit
+          Quota:
+            Limit: !Ref ApiQuotaPerDay
+            Period: DAY
+
+  BackendFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub stock-portfolio-${Stage}-api
+      Runtime: java25
+      Handler: org.springframework.cloud.function.adapter.aws.FunctionInvoker
+      CodeUri: ../backend/build/libs/stock-portfolio-0.0.1-SNAPSHOT-aws.jar
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: !Ref LambdaMemoryMb
+      Timeout: !Ref LambdaTimeoutSeconds
+      Environment:
+        Variables:
+          TZ: Asia/Seoul
+          SPRING_CLOUD_FUNCTION_DEFINITION: apiGatewayHandler
+          PORTFOLIO_TABLE_NAME: !Ref TableName
+          KIS_APPKEY_PARAMETER: !Ref KisAppKeyParameter
+          KIS_APPSECRET_PARAMETER: !Ref KisAppSecretParameter
+      Events:
+        # Method: ANY 로 묶으면 OPTIONS preflight 도 ANY 로 잡혀 ApiKeyRequired 가 적용된다.
+        # 브라우저는 preflight 에 x-api-key 를 안 붙이므로 403. 메서드별 분리 + OPTIONS 만
+        # ApiKeyRequired: false 로 명시해 Lambda 의 preflight() 핸들러가 응답하게 한다.
+        # (SAM Cors 의 OPTIONS Mock 은 {proxy+} 경로에서 자동 생성이 일관되지 않아 의존하지 않음.)
+        ApiGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BackendApi
+            Path: /api/{proxy+}
+            Method: GET
+        ApiPost:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BackendApi
+            Path: /api/{proxy+}
+            Method: POST
+        ApiOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BackendApi
+            Path: /api/{proxy+}
+            Method: OPTIONS
+            Auth:
+              ApiKeyRequired: false
+
+  # === FE-5f: 운영 가시성 (로그 보존 + 알람 1개) ===
+  # Lambda 가 첫 호출 시 같은 이름의 로그 그룹을 자동 생성한다. 이미 자동 생성된 상태에서
+  # CFN 으로 새로 만들려 하면 AlreadyExistsException → 사용자가 사전에 기존 로그 그룹을 삭제해야
+  # 한다 (절차는 infra/README.md 참고). LogGroupName 은 BackendFunction.FunctionName 과
+  # 동일 패턴(stock-portfolio-${Stage}-api)을 직접 박제해 BackendFunction 과의 순환 참조를 피한다.
+  BackendLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/stock-portfolio-${Stage}-api
+      RetentionInDays: !Ref LogRetentionDays
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub stock-portfolio-${Stage}-alarms
+      DisplayName: stock-portfolio alarms
+
+  # SNS email 구독은 사용자가 받은 메일에서 "Confirm subscription" 링크를 클릭하기 전까지
+  # PendingConfirmation 상태이며, 그 전엔 알람이 와도 메일이 안 온다 (운영 안내는 README 참조).
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+      TopicArn: !Ref AlarmTopic
+
+  # 1인용 운영 알람은 "Lambda Errors > 0 (5분 윈도우)" 1개만 유지한다.
+  # 추가 메트릭 알람(p99 지연, throttle 등)은 1인용에 과하므로 도입하지 않는다.
+  # TreatMissingData=notBreaching 으로 호출 자체가 없는 시간대는 알람을 띄우지 않는다.
+  BackendErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub stock-portfolio-${Stage}-backend-errors
+      AlarmDescription: Lambda Errors > 0 in 5 minutes (1인용 운영 알람 1개만 유지).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BackendFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
+  # === FE-5c: 프론트엔드 정적 호스팅 ===
+  # 비공개 S3 + CloudFront + OAC (OAI 는 deprecated). 커스텀 도메인 없음.
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !If [HasFrontendBucketName, !Ref FrontendBucketName, !Ref AWS::NoValue]
+      # 퍼블릭 접근 전면 차단. 오직 CloudFront OAC 를 통해서만 객체에 접근.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        # 잘못된 배포 즉시 롤백을 위한 객체 버저닝.
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              # 비-current 버전이 무한히 누적되어 스토리지 비용이 늘지 않도록 30일 보관.
+              NoncurrentDays: 30
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadViaOAC
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub stock-portfolio-${Stage}-oac
+        Description: S3 origin 보호용 OAC (sigv4 always)
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # SPA 클라이언트 라우팅 처리:
+  #   주소창에 직접 /trades, /snapshots 같은 경로로 진입했을 때 S3 에 해당 객체가 없으므로
+  #   CloudFront 가 403/404 를 반환한다. Custom Error Response 매핑 대신 CloudFront Functions
+  #   로 viewer-request 단계에서 확장자 없는 경로를 /index.html 로 리라이트한다.
+  #   /api/ 경로는 이 분포에 매핑되지 않지만 안전 장치로 제외.
+  FrontendSpaRouter:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub stock-portfolio-${Stage}-spa-router
+      AutoPublish: true
+      FunctionConfig:
+        Runtime: cloudfront-js-2.0
+        Comment: SPA 라우팅용 viewer-request 리라이트
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          // /api/ 경로는 별도 origin (이 분포엔 없음) — 방어적으로 우회.
+          if (uri.indexOf('/api/') === 0) {
+            return request;
+          }
+          // 마지막 segment 에 '.' (확장자) 가 있으면 정적 파일 → 그대로.
+          var lastSegment = uri.substring(uri.lastIndexOf('/') + 1);
+          if (lastSegment.indexOf('.') !== -1) {
+            return request;
+          }
+          // 확장자 없는 경로 (예: /, /trades, /snapshots) → SPA 진입점으로 리라이트.
+          request.uri = '/index.html';
+          return request;
+        }
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub stock-portfolio-${Stage} frontend
+        Enabled: true
+        HttpVersion: http2and3
+        IPV6Enabled: true
+        PriceClass: !Ref CloudFrontPriceClass
+        DefaultRootObject: index.html
+        Origins:
+          - Id: FrontendS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig:
+              # OAC 사용 시 OriginAccessIdentity 는 빈 문자열로 둔다 (OAI 미사용 표식).
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          # AWS managed: CachingOptimized — 정적 자산 기본 캐시.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          # AWS managed: SecurityHeadersPolicy — HSTS / X-Content-Type-Options 등 자동 부착.
+          ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt FrontendSpaRouter.FunctionARN
+        # SPA 진입점 / SW / manifest 류는 매번 갱신해야 PWA autoUpdate 가 즉시 반영된다.
+        # AWS managed: CachingDisabled (4135ea2d-6df8-44a3-9df3-4b5a84be39ad).
+        CacheBehaviors:
+          - PathPattern: /index.html
+            TargetOriginId: FrontendS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt FrontendSpaRouter.FunctionARN
+          - PathPattern: /sw.js
+            TargetOriginId: FrontendS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+          - PathPattern: /registerSW.js
+            TargetOriginId: FrontendS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+          - PathPattern: /manifest.webmanifest
+            TargetOriginId: FrontendS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+        ViewerCertificate:
+          # 커스텀 도메인 미사용 — *.cloudfront.net 기본 인증서.
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  TableName:
+    Description: DynamoDB 테이블 이름
+    Value: !Ref PortfolioTable
+    Export:
+      Name: !Sub ${AWS::StackName}-TableName
+  LambdaExecutionRoleArn:
+    Description: Lambda 실행 IAM Role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaExecutionRoleArn
+  BackendFunctionName:
+    Description: 백엔드 Lambda Function 이름
+    Value: !Ref BackendFunction
+    Export:
+      Name: !Sub ${AWS::StackName}-BackendFunctionName
+  BackendApiId:
+    Description: API Gateway REST API ID
+    Value: !Ref BackendApi
+    Export:
+      Name: !Sub ${AWS::StackName}-BackendApiId
+  BackendApiInvokeUrl:
+    Description: API Gateway Invoke URL (Stage 포함). 호출 시 x-api-key 헤더 필요.
+    Value: !Sub https://${BackendApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}
+    Export:
+      Name: !Sub ${AWS::StackName}-BackendApiInvokeUrl
+  FrontendBucketName:
+    Description: 프론트엔드 정적 자산 S3 버킷 이름 (배포 sync 대상)
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-FrontendBucketName
+  FrontendDistributionId:
+    Description: CloudFront 분포 ID (캐시 무효화 대상)
+    Value: !Ref FrontendDistribution
+    Export:
+      Name: !Sub ${AWS::StackName}-FrontendDistributionId
+  FrontendUrl:
+    Description: 사용자가 브라우저로 열 프론트엔드 URL (CloudFront 기본 도메인)
+    Value: !Sub https://${FrontendDistribution.DomainName}
+    Export:
+      Name: !Sub ${AWS::StackName}-FrontendUrl
+  AlarmTopicArn:
+    Description: 운영 알람 SNS Topic ARN (향후 추가 알람이 같은 토픽 재사용)
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-AlarmTopicArn

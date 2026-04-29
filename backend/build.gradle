@@ -2,7 +2,12 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '4.0.6'
     id 'io.spring.dependency-management' version '1.1.7'
+    // Lambda 배포용 fat-jar (uber jar) 산출. bootJar 의 BOOT-INF/lib 중첩 레이아웃을
+    // Lambda Java 런타임이 classpath 에 올리지 못하므로 의존성을 평탄화한 jar 가 필요.
+    id 'com.gradleup.shadow' version '9.4.1'
 }
+
+import com.github.jengelman.gradle.plugins.shadow.transformers.PropertiesFileTransformer
 
 group = 'com.example'
 version = '0.0.1-SNAPSHOT'
@@ -45,6 +50,108 @@ dependencyManagement {
     imports {
         mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
     }
+}
+
+tasks.named('shadowJar') {
+    archiveBaseName = 'stock-portfolio'
+    archiveClassifier = 'aws'
+    archiveVersion = project.version
+
+    // META-INF/services/* 충돌 병합 (SLF4J, Jackson, AWS SDK 등 ServiceLoader 자원)
+    mergeServiceFiles()
+
+    // spring.factories / spring.handlers / spring.schemas 같은 properties 형 메타파일은
+    // 키 충돌 시 값을 콤마로 이어 붙여야 하므로 PropertiesFileTransformer(append) 사용.
+    transform(PropertiesFileTransformer) {
+        paths = [
+            'META-INF/spring.factories',
+            'META-INF/spring.handlers',
+            'META-INF/spring.schemas',
+            'META-INF/spring.tooling'
+        ]
+        mergeStrategy = 'append'
+        mergeSeparator = ','
+    }
+
+    // Spring Boot 4 / Spring Framework 7 자동설정 메타파일(META-INF/spring/*.imports, aot.factories)은
+    // Shadow 9.x 의 AppendingTransformer / ServiceFileTransformer DSL 에서 안정적으로 병합되지 않아,
+    // jar 산출 후 doLast 로 runtimeClasspath 의 모든 contributing jar 내용을 직접 라인 병합한다.
+    // 한 jar 의 파일이 다른 jar 의 같은 파일을 덮어써서 부팅 시 "No auto configuration classes found"
+    // 가 나는 것을 방지한다.
+    doLast {
+        def importsByPath = [:].withDefault { new java.util.LinkedHashSet<String>() }
+        def targets = { String name ->
+            name.startsWith('META-INF/spring/') &&
+                    (name.endsWith('.imports') || name == 'META-INF/spring/aot.factories')
+        }
+        project.configurations.runtimeClasspath.each { dep ->
+            if (dep.name.endsWith('.jar') && dep.exists()) {
+                new java.util.zip.ZipFile(dep).withCloseable { zf ->
+                    zf.entries().each { entry ->
+                        if (!entry.directory && targets(entry.name)) {
+                            zf.getInputStream(entry).withReader('UTF-8') { r ->
+                                r.eachLine { line ->
+                                    def trimmed = line.trim()
+                                    if (trimmed && !trimmed.startsWith('#')) {
+                                        importsByPath[entry.name] << trimmed
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (importsByPath.isEmpty()) {
+            throw new GradleException('No META-INF/spring/*.imports content collected — fat-jar would boot-fail.')
+        }
+
+        def jarFile = archiveFile.get().asFile
+        def tmpFile = new File(jarFile.parentFile, jarFile.name + '.tmp')
+        new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(tmpFile)).withCloseable { zos ->
+            def written = new java.util.HashSet<String>()
+            new java.util.zip.ZipFile(jarFile).withCloseable { zin ->
+                zin.entries().each { entry ->
+                    if (entry.directory || written.contains(entry.name)) return
+                    written << entry.name
+                    zos.putNextEntry(new java.util.zip.ZipEntry(entry.name))
+                    if (importsByPath.containsKey(entry.name)) {
+                        zos.write(importsByPath[entry.name].join('\n').getBytes('UTF-8'))
+                        zos.write('\n'.getBytes('UTF-8'))
+                    } else {
+                        zin.getInputStream(entry).withCloseable { is -> zos.write(is.bytes) }
+                    }
+                    zos.closeEntry()
+                }
+            }
+            importsByPath.each { name, lines ->
+                if (!written.contains(name)) {
+                    zos.putNextEntry(new java.util.zip.ZipEntry(name))
+                    zos.write(lines.join('\n').getBytes('UTF-8'))
+                    zos.write('\n'.getBytes('UTF-8'))
+                    zos.closeEntry()
+                }
+            }
+        }
+        if (!jarFile.delete()) {
+            throw new GradleException("Failed to delete original ${jarFile}")
+        }
+        if (!tmpFile.renameTo(jarFile)) {
+            throw new GradleException("Failed to rename ${tmpFile} -> ${jarFile}")
+        }
+        logger.lifecycle("Merged ${importsByPath.size()} META-INF/spring/* file(s) into shadow jar")
+    }
+
+    manifest {
+        attributes(
+            'Main-Class': 'com.example.stockportfolio.StockPortfolioApplication'
+        )
+    }
+}
+
+// 일반 `assemble` 호출 시 shadowJar 도 함께 만들어지도록 연결.
+tasks.named('assemble') {
+    dependsOn 'shadowJar'
 }
 
 tasks.named('test') {

@@ -47,3 +47,8 @@ frontend/.env.local
 frontend/.env.*.local
 npm-debug.log*
 yarn-error.log*
+
+### AWS SAM ###
+.aws-sam/
+infra/.aws-sam/
+infra/samconfig.local.toml

@@ -43,6 +43,12 @@ public class LambdaConfig {
                 String method = event.getHttpMethod() != null ? event.getHttpMethod() : "GET";
                 String path = event.getPath() != null ? event.getPath() : "";
 
+                // CORS preflight: SAM 의 Cors Mock 이 Path: /api/{proxy+} + Method: ANY 와
+                // 충돌해 ANY 가 OPTIONS 를 잡아챌 수 있다. Lambda 가 직접 응답해 안전하게.
+                if ("OPTIONS".equalsIgnoreCase(method)) {
+                    return preflight();
+                }
+
                 if ("GET".equalsIgnoreCase(method) && path.endsWith("/api/portfolio")) {
                     PortfolioView view = service.view();
                     return ok(mapper.writeValueAsString(view));
@@ -82,6 +88,16 @@ public class LambdaConfig {
         };
     }
 
+    private static APIGatewayProxyResponseEvent preflight() {
+        return new APIGatewayProxyResponseEvent()
+                .withStatusCode(204)
+                .withHeaders(Map.of(
+                        "Access-Control-Allow-Origin", "*",
+                        "Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+                        "Access-Control-Allow-Headers", "Content-Type,x-api-key",
+                        "Access-Control-Max-Age", "3600"));
+    }
+
     private static APIGatewayProxyResponseEvent ok(String body) {
         return response(200, body);
     }
@@ -105,7 +121,11 @@ public class LambdaConfig {
     private static APIGatewayProxyResponseEvent response(int status, String body) {
         return new APIGatewayProxyResponseEvent()
                 .withStatusCode(status)
-                .withHeaders(Map.of("Content-Type", "application/json"))
+                .withHeaders(Map.of(
+                        "Content-Type", "application/json",
+                        // CloudFront 도메인에서 호출되는 SPA 라 actual response 에도 CORS 헤더 필수.
+                        // API Gateway Cors 설정은 OPTIONS preflight 만 처리하고 GET/POST 응답엔 영향 없다.
+                        "Access-Control-Allow-Origin", "*"))
                 .withBody(body);
     }
 

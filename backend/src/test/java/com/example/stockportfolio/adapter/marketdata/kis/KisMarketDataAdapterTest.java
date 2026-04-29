@@ -128,7 +128,7 @@ class KisMarketDataAdapterTest {
                                   "rt_cd": "0",
                                   "output": {
                                     "last": "150.00",
-                                    "t_xrat": "%s"
+                                    "t_rate": "%s"
                                   }
                                 }
                                 """.formatted(rate))));

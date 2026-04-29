@@ -1,0 +1,19 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "stock-portfolio"
+s3_prefix = "stock-portfolio"
+confirm_changeset = true
+capabilities = "CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+parameter_overrides = "Stage=\"prod\" TableName=\"Portfolio\" KisAppKeyParameter=\"/portfolio/kis/app-key\" KisAppSecretParameter=\"/portfolio/kis/app-secret\" LambdaMemoryMb=\"1024\" LambdaTimeoutSeconds=\"30\" ApiThrottleRateLimit=\"10\" ApiThrottleBurstLimit=\"20\" ApiQuotaPerDay=\"5000\""
+image_repositories = []
+
+[default.build.parameters]
+cached = true
+
+[default.validate.parameters]
+region = "ap-northeast-2"
+
+[default.global.parameters]
+region = "ap-northeast-2"
