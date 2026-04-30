@@ -363,7 +363,7 @@ Resources:
         Runtime: cloudfront-js-2.0
         Comment: Basic Auth 게이트 + SPA viewer-request 리라이트
       FunctionCode: !Sub |
-        import cf from 'cloudfront';
+        import crypto from 'crypto';
 
         var EXPECTED_HASH = '${BasicAuthHash}';
         var REALM = 'Stock Portfolio';
@@ -376,7 +376,7 @@ Resources:
           if (!auth) {
             return unauthorized();
           }
-          var hash = cf.crypto.createHash('sha256').update(auth).digest('hex');
+          var hash = crypto.createHash('sha256').update(auth).digest('hex');
           if (hash !== EXPECTED_HASH) {
             return unauthorized();
           }
