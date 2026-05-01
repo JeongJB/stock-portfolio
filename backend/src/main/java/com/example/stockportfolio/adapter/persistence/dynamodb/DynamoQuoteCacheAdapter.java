@@ -12,21 +12,21 @@ import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.LocalDate;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
- * DynamoDB 단일 테이블에 KST 일자별 시세 캐시를 보존한다. TTL 속성(`ttl`)으로 자동 만료.
+ * DynamoDB 단일 테이블에 KST 10분 슬롯 단위 시세 캐시를 보존한다. TTL 속성(`ttl`)으로 자동 만료.
  *
  * NOTE: 자동 만료는 AWS 콘솔에서 `Portfolio` 테이블 TTL 속성을 `ttl` 로 활성화해야 동작한다.
  */
 public final class DynamoQuoteCacheAdapter implements QuoteCachePort {
 
-    // 36시간 = KST 자정 넘어 익일 EOD까지 여유. 어차피 캐시 hit 판정은 SK(KST 날짜)로 하므로
-    // TTL은 stale 항목의 강제 청소 용도이며, 더 짧으면 불필요한 KIS 호출이 늘어난다.
-    static final Duration DEFAULT_TTL = Duration.ofHours(36);
+    // 10분 슬롯 단위 캐시 + 1h TTL (stale 항목 강제 청소). 슬롯 키가 시각을 결정하므로
+    // TTL 은 만료된 슬롯이 테이블에 남지 않게 정리하는 보조 장치다.
+    static final Duration DEFAULT_TTL = Duration.ofHours(1);
 
     private final DynamoDbClient client;
     private final String tableName;
@@ -45,12 +45,12 @@ public final class DynamoQuoteCacheAdapter implements QuoteCachePort {
     }
 
     @Override
-    public Optional<Quote> find(String ticker, Exchange exchange, LocalDate kstDate) {
+    public Optional<Quote> find(String ticker, Exchange exchange, Instant asOf) {
         GetItemResponse response = client.getItem(GetItemRequest.builder()
                 .tableName(tableName)
                 .key(Map.of(
                         DynamoAttributes.PK, AttributeValue.fromS(DynamoAttributes.tickerPk(ticker)),
-                        DynamoAttributes.SK, AttributeValue.fromS(DynamoAttributes.quoteSk(kstDate))))
+                        DynamoAttributes.SK, AttributeValue.fromS(DynamoAttributes.quoteSk(asOf))))
                 .consistentRead(false)
                 .build());
         if (!response.hasItem() || response.item().isEmpty()) {
@@ -65,11 +65,11 @@ public final class DynamoQuoteCacheAdapter implements QuoteCachePort {
     }
 
     @Override
-    public void put(Quote quote, LocalDate kstDate) {
+    public void put(Quote quote, Instant asOf) {
         long ttlEpochSecond = clock.instant().plus(ttl).getEpochSecond();
         client.putItem(PutItemRequest.builder()
                 .tableName(tableName)
-                .item(DynamoAttributes.quoteItem(quote, kstDate, ttlEpochSecond))
+                .item(DynamoAttributes.quoteItem(quote, asOf, ttlEpochSecond))
                 .build());
     }
 }

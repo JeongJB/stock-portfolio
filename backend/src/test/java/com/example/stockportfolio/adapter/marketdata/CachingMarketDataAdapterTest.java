@@ -13,8 +13,8 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -50,21 +50,20 @@ class CachingMarketDataAdapterTest {
         assertThat(delegate.callCount.get()).isEqualTo(1);
         assertThat(cache.store).hasSize(1);
 
-        // KST 오늘 = 2026-04-28 (UTC 기준 00:00 → KST 09:00)
-        LocalDate kstToday = LocalDate.of(2026, 4, 28);
-        Quote stored = cache.store.get(cacheKey("AAPL", kstToday));
+        // 2026-04-28 09:00 KST 슬롯에 적재됐는지 확인 (10분 floor → 09:00)
+        String slotKey = slotKey("AAPL", FIXED_NOW);
+        Quote stored = cache.store.get(slotKey);
         assertThat(stored).isNotNull();
         assertThat(stored.price().amount()).isEqualByComparingTo("175.50");
     }
 
     @Test
     void 캐시_hit이면_위임을_호출하지_않고_저장된_값을_반환한다() {
-        // 사전 적재
-        LocalDate kstToday = LocalDate.of(2026, 4, 28);
+        // 사전 적재 (FIXED_NOW 와 같은 슬롯)
         Quote pre = new Quote("AAPL", Exchange.NAS,
                 new Money(new BigDecimal("123.45"), Currency.USD),
                 Instant.parse("2026-04-27T20:00:00Z"));
-        cache.store.put(cacheKey("AAPL", kstToday), pre);
+        cache.store.put(slotKey("AAPL", FIXED_NOW), pre);
 
         Quote q = adapter.getQuote("AAPL", Exchange.NAS);
 
@@ -101,8 +100,51 @@ class CachingMarketDataAdapterTest {
         assertThat(delegate.fxCallCount.get()).isEqualTo(1);
     }
 
-    private static String cacheKey(String ticker, LocalDate date) {
-        return ticker + "|" + date;
+    /**
+     * 같은 10분 슬롯 안의 두 시각은 같은 슬롯 키로 정규화되므로 두 번째 호출은 캐시 hit.
+     */
+    @Test
+    void 같은_10분_슬롯_안의_두_시각은_캐시_hit() {
+        // 09:00 KST → put
+        Clock c1 = Clock.fixed(FIXED_NOW, ZoneId.of("UTC"));
+        adapter = new CachingMarketDataAdapter(delegate, cache, c1);
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        // 09:09 KST → 같은 슬롯이므로 hit (위임 호출 추가 없음)
+        Clock c2 = Clock.fixed(FIXED_NOW.plusSeconds(9 * 60 + 59), ZoneId.of("UTC"));
+        adapter = new CachingMarketDataAdapter(delegate, cache, c2);
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(delegate.callCount.get()).isEqualTo(1);
+    }
+
+    /**
+     * 슬롯 경계를 넘는 두 시각은 키가 다르므로 두 번 다 위임 호출.
+     */
+    @Test
+    void 슬롯_경계를_넘으면_캐시_miss로_위임을_재호출() {
+        // 09:00 KST → put
+        Clock c1 = Clock.fixed(FIXED_NOW, ZoneId.of("UTC"));
+        adapter = new CachingMarketDataAdapter(delegate, cache, c1);
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        // 09:10 KST (정확히 다음 슬롯) → miss
+        Clock c2 = Clock.fixed(FIXED_NOW.plusSeconds(10 * 60), ZoneId.of("UTC"));
+        adapter = new CachingMarketDataAdapter(delegate, cache, c2);
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(delegate.callCount.get()).isEqualTo(2);
+        assertThat(cache.store).hasSize(2);
+    }
+
+    /**
+     * 테스트 더미용 슬롯 키. 어댑터의 슬롯 라운딩과 동일 규칙(10분 floor + KST yyyyMMddHHmm).
+     */
+    private static String slotKey(String ticker, Instant asOf) {
+        ZonedDateTime kst = asOf.atZone(KST);
+        int floored = (kst.getMinute() / 10) * 10;
+        ZonedDateTime slot = kst.withMinute(floored).withSecond(0).withNano(0);
+        return ticker + "|" + slot.toLocalDateTime();
     }
 
     /**
@@ -133,11 +175,11 @@ class CachingMarketDataAdapterTest {
         boolean failOnPut = false;
 
         @Override
-        public Optional<Quote> find(String ticker, Exchange exchange, LocalDate kstDate) {
+        public Optional<Quote> find(String ticker, Exchange exchange, Instant asOf) {
             if (failOnFind) {
                 throw new RuntimeException("simulated find failure");
             }
-            Quote q = store.get(cacheKey(ticker, kstDate));
+            Quote q = store.get(slotKey(ticker, asOf));
             if (q == null || q.exchange() != exchange) {
                 return Optional.empty();
             }
@@ -145,11 +187,11 @@ class CachingMarketDataAdapterTest {
         }
 
         @Override
-        public void put(Quote quote, LocalDate kstDate) {
+        public void put(Quote quote, Instant asOf) {
             if (failOnPut) {
                 throw new RuntimeException("simulated put failure");
             }
-            store.put(cacheKey(quote.ticker(), kstDate), quote);
+            store.put(slotKey(quote.ticker(), asOf), quote);
         }
     }
 }

@@ -50,6 +50,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 단위 | 산출물 |
 | --- | --- |
 | P1-1 종목 META + 거래소 자동 탐색 | `TickerMeta` 도메인 + `TickerMetaRepository` 포트 + `DynamoTickerMetaRepository` 어댑터. `ExchangeResolver` 가 ticker→exchange 결정 (META 없음→NAS/NYS/AMS 탐색, 카운터≥3→재탐색). `PortfolioApplicationService` 의 `DEFAULT_EXCHANGE` 하드코딩 제거 + view() 내 자기치유 (성공 시 카운터 0 리셋, 실패 시 +1). 거래 PUT 시 BUY/SELL 만 GSI1 키(`gsi1pk=TICKER#<sym>`, `gsi1sk=TRADE#<isoTs>`) 박제. `listTradesByTicker` 메서드 추가 (P2 대비). cron 미도입 — view() 안에서 자기치유. |
+| P1-2 시세 캐시 10분 슬롯화 | DynamoQuoteCache SK 를 `QUOTE#yyyyMMddHHmm` (KST 10분 floor) 로 변경, TTL 36h→1h. QuoteCachePort 시그니처 LocalDate→Instant. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. |
 
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 
@@ -72,7 +73,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 다음 단계 (재개 시 이 순서)
 
 1. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
-   - 시세 캐시 주기 단축 — 현재 KST 일자 단위(`CachingMarketDataAdapter.java:44`의 `kstToday` SK)에서 **10분 슬롯 단위**로 변경. SK 를 `QUOTE#<KST yyyy-MM-dd HH:mm>`(분을 10분으로 라운딩) 형태로 바꾸고 DynamoDB `ttl` 도 1~2시간으로 단축. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. 장 마감/주말엔 슬롯이 바뀌어도 응답 동일하므로 실질 호출 증가 적음.
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
    - 백업/내보내기.

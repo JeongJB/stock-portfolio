@@ -21,6 +21,9 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -49,6 +52,11 @@ final class DynamoAttributes {
     static final String QUOTE_SK_PREFIX = "QUOTE#";
     static final String TICKER_META_SK = "META";
     static final String TTL_ATTR = "ttl";
+
+    static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    static final int QUOTE_SLOT_MINUTES = 10;
+    private static final DateTimeFormatter QUOTE_SLOT_FORMAT =
+            DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(KST);
 
     // positions 직렬화 전용. JSON 컬럼만 다루므로 모듈 추가는 불필요.
     private static final ObjectMapper SNAPSHOT_MAPPER = JsonMapper.builder().build();
@@ -282,17 +290,23 @@ final class DynamoAttributes {
         return TICKER_PK_PREFIX + ticker;
     }
 
-    static String quoteSk(LocalDate kstDate) {
-        return QUOTE_SK_PREFIX + kstDate.toString();
+    /**
+     * KST 기준 10분 단위 floor 슬롯 키. 예: 2026-05-01T13:27:33+09:00 → "QUOTE#202605011320".
+     */
+    static String quoteSk(Instant asOf) {
+        ZonedDateTime kst = asOf.atZone(KST);
+        int flooredMinute = (kst.getMinute() / QUOTE_SLOT_MINUTES) * QUOTE_SLOT_MINUTES;
+        ZonedDateTime slot = kst.withMinute(flooredMinute).withSecond(0).withNano(0);
+        return QUOTE_SK_PREFIX + QUOTE_SLOT_FORMAT.format(slot);
     }
 
     static Map<String, AttributeValue> quoteItem(
             com.example.stockportfolio.domain.Quote quote,
-            LocalDate kstDate,
+            Instant asOf,
             long ttlEpochSecond) {
         Map<String, AttributeValue> item = new HashMap<>();
         item.put(PK, s(tickerPk(quote.ticker())));
-        item.put(SK, s(quoteSk(kstDate)));
+        item.put(SK, s(quoteSk(asOf)));
         item.put("ticker", s(quote.ticker()));
         item.put("exchange", s(quote.exchange().name()));
         item.put("priceUsd", n(quote.price().amount()));
