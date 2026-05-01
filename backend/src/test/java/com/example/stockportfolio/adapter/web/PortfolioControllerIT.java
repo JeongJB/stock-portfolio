@@ -249,6 +249,65 @@ class PortfolioControllerIT {
     }
 
     @Test
+    void POST_DIVIDEND는_201과_현금_증가_및_평가손익_누적을_반영한다() throws Exception {
+        // 시드: 입금 + 매수 → 현금 8499, AAPL 10주 @150
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"10000"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"BUY","ticker":"AAPL","qty":"10","price":"150","fee":"1"}
+                                """))
+                .andExpect(status().isCreated());
+
+        // DIVIDEND 5 USD 입금
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DIVIDEND","ticker":"AAPL","cashAmount":"5"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.type").value("DIVIDEND"));
+
+        mockMvc.perform(get("/api/portfolio"))
+                .andExpect(status().isOk())
+                // 현금: 8499 + 5 = 8504
+                .andExpect(jsonPath("$.cashUsd").value("8504.0000"))
+                // 원금은 영향 없음 (DEPOSIT 만 반영)
+                .andExpect(jsonPath("$.principalUsd").value("10000.0000"))
+                // AAPL 평가손익 = (200-150)*10 + 5 = 505
+                .andExpect(jsonPath("$.positions[0].unrealizedPnlUsd").value("505.0000"))
+                .andExpect(jsonPath("$.totalUnrealizedPnlUsd").value("505.0000"));
+    }
+
+    @Test
+    void POST_DIVIDEND_ticker_누락은_400을_반환한다() throws Exception {
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DIVIDEND","cashAmount":"5"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("domain_error"));
+    }
+
+    @Test
+    void POST_DIVIDEND_amount_0이하는_400을_반환한다() throws Exception {
+        // @DecimalMin(value="0", inclusive=false) — 0 또는 음수면 validation_failed
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DIVIDEND","ticker":"AAPL","cashAmount":"0"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("validation_failed"));
+    }
+
+    @Test
     void POST_snapshots는_현재_view를_박제하고_본문을_반환한다() throws Exception {
         mockMvc.perform(post("/api/trades")
                         .contentType(MediaType.APPLICATION_JSON)

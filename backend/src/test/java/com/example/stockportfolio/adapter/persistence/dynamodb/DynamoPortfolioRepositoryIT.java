@@ -10,6 +10,7 @@ import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Quantity;
 import com.example.stockportfolio.domain.Trade;
+import com.example.stockportfolio.domain.TradeType;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -370,6 +371,84 @@ class DynamoPortfolioRepositoryIT {
         // DEPOSIT 만 있을 때 임의 ticker 로 조회 → 빈 결과
         List<Trade> trades = repository.listTradesByTicker("AAPL", 10);
         assertThat(trades).isEmpty();
+    }
+
+    @Test
+    void DIVIDEND_거래도_GSI1_키가_박제된다_및_listTradesByTicker로_조회된다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("10000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        Trade buy = Trade.buy(Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", Quantity.of("10"),
+                Money.of("150", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buy);
+        repository.recordTrade(buy, portfolio);
+
+        Trade dividend = Trade.dividend(Instant.parse("2026-03-15T00:00:00Z"),
+                "AAPL", Money.of("12.34", Currency.USD));
+        portfolio.apply(dividend);
+        repository.recordTrade(dividend, portfolio);
+
+        // base item 에 gsi1pk/gsi1sk 박제 확인
+        GetItemResponse response = client.getItem(GetItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "pk", AttributeValue.fromS("USER#me"),
+                        "sk", AttributeValue.fromS("TRADE#" + dividend.executedAt() + "#" + dividend.id())))
+                .build());
+        Map<String, AttributeValue> item = response.item();
+        assertThat(item.get("gsi1pk").s()).isEqualTo("TICKER#AAPL");
+        assertThat(item.get("gsi1sk").s()).isEqualTo("TRADE#" + dividend.executedAt() + "#" + dividend.id());
+        // 도메인 필드 박제 확인
+        assertThat(item.get("tradeType").s()).isEqualTo("DIVIDEND");
+        assertThat(item.get("ticker").s()).isEqualTo("AAPL");
+        assertThat(new BigDecimal(item.get("cashAmount").n())).isEqualByComparingTo(new BigDecimal("12.34"));
+
+        // listTradesByTicker 가 BUY/DIVIDEND 모두 최신순 반환
+        List<Trade> trades = repository.listTradesByTicker("AAPL", 10);
+        assertThat(trades).hasSize(2);
+        assertThat(trades.get(0).id()).isEqualTo(dividend.id());
+        assertThat(trades.get(1).id()).isEqualTo(buy.id());
+
+        // load 후 현금 = 10000 - 1500 + 12.34
+        Portfolio loaded = repository.load();
+        assertThat(loaded.cashUsd()).isEqualTo(Money.of("8512.34", Currency.USD));
+        // 포지션은 무영향
+        assertThat(loaded.position("AAPL").orElseThrow().qty()).isEqualTo(Quantity.of("10"));
+    }
+
+    @Test
+    void listTradesByType_DIVIDEND는_DIVIDEND_거래만_반환한다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("10000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        Trade buy = Trade.buy(Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", Quantity.of("10"),
+                Money.of("100", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buy);
+        repository.recordTrade(buy, portfolio);
+
+        Trade div1 = Trade.dividend(Instant.parse("2026-03-01T00:00:00Z"),
+                "AAPL", Money.of("10", Currency.USD));
+        portfolio.apply(div1);
+        repository.recordTrade(div1, portfolio);
+
+        Trade div2 = Trade.dividend(Instant.parse("2026-04-01T00:00:00Z"),
+                "MSFT", Money.of("7", Currency.USD));
+        portfolio.apply(div2);
+        repository.recordTrade(div2, portfolio);
+
+        List<Trade> divs = repository.listTradesByType(TradeType.DIVIDEND);
+        assertThat(divs).hasSize(2);
+        // 시간 오름차순 보장
+        assertThat(divs.get(0).id()).isEqualTo(div1.id());
+        assertThat(divs.get(1).id()).isEqualTo(div2.id());
     }
 
     @Test

@@ -181,6 +181,62 @@ class PortfolioTest {
     }
 
     @Test
+    @DisplayName("DIVIDEND는 현금만 증가시키고 포지션·원금은 무영향")
+    void dividend_increasesCashOnly() {
+        Portfolio portfolio = new Portfolio();
+        portfolio.apply(Trade.deposit(T0, usd("10000")));
+        portfolio.apply(Trade.buy(T0, "AAPL", qty("10"), usd("100"), usd("0")));
+        // 매수 후 현금 9000
+
+        portfolio.apply(Trade.dividend(T0, "AAPL", usd("12.34")));
+
+        // 현금만 +12.34, 포지션 수량/평균단가/실현손익 모두 그대로
+        assertEquals(usd("9012.34"), portfolio.cashUsd());
+        Position pos = portfolio.position("AAPL").orElseThrow();
+        assertEquals(qty("10"), pos.qty());
+        assertEquals(usd("100"), pos.avgCost());
+        assertEquals(usd("0"), pos.realizedPnl());
+        // 원금/누적입금/누적출금은 영향 없음
+        assertEquals(usd("10000"), portfolio.cumulativeDeposit());
+        assertEquals(usd("0"), portfolio.cumulativeWithdraw());
+        assertEquals(usd("10000"), portfolio.principal());
+    }
+
+    @Test
+    @DisplayName("DIVIDEND는 보유하지 않는 종목(매도 후 잔여)도 허용한다")
+    void dividend_allowsTickerNotHeld() {
+        Portfolio portfolio = new Portfolio();
+        portfolio.apply(Trade.deposit(T0, usd("100")));
+
+        // 보유한 적 없는 ticker — 권리락 시점/지급일 차이로 늦게 들어온 배당도 합법.
+        portfolio.apply(Trade.dividend(T0, "AAPL", usd("5")));
+
+        assertEquals(usd("105"), portfolio.cashUsd());
+        assertTrue(portfolio.position("AAPL").isEmpty());
+    }
+
+    @Test
+    @DisplayName("DIVIDEND amount<=0 은 도메인 예외")
+    void dividend_nonPositiveAmount_throws() {
+        Portfolio portfolio = new Portfolio();
+        DomainException ex = assertThrows(DomainException.class,
+                () -> portfolio.apply(Trade.dividend(T0, "AAPL", usd("0"))));
+        assertTrue(ex.getMessage().contains("DIVIDEND 금액은 0보다 커야 한다"));
+    }
+
+    @Test
+    @DisplayName("DIVIDEND ticker 누락은 도메인 예외")
+    void dividend_missingTicker_throws() {
+        Portfolio portfolio = new Portfolio();
+        Trade noTicker = new Trade("id-x", TradeType.DIVIDEND, T0, null, null, null, null, usd("1"));
+        assertThrows(DomainException.class, () -> portfolio.apply(noTicker));
+
+        Trade blankTicker = new Trade("id-y", TradeType.DIVIDEND, T0, "  ", null, null, null, usd("1"));
+        DomainException ex = assertThrows(DomainException.class, () -> portfolio.apply(blankTicker));
+        assertTrue(ex.getMessage().contains("ticker"));
+    }
+
+    @Test
     @DisplayName("원금은 누적입금-누적출금이며 BUY/SELL은 원금에 영향 없음")
     void principal_unaffectedByBuySell() {
         Portfolio portfolio = new Portfolio();

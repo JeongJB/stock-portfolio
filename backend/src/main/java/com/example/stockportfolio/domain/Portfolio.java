@@ -62,6 +62,7 @@ public final class Portfolio {
             case WITHDRAW -> applyWithdraw(trade);
             case BUY -> applyBuy(trade);
             case SELL -> applySell(trade);
+            case DIVIDEND -> applyDividend(trade);
         }
     }
 
@@ -108,6 +109,18 @@ public final class Portfolio {
 
         position.setQty(newQty);
         position.setAvgCost(Money.of(newAvg, price.currency()));
+    }
+
+    private void applyDividend(Trade trade) {
+        // ticker 는 박제 목적(종목별 누적 배당 합산)이며 보유 여부 검증은 하지 않는다 —
+        // 매도 직후 권리락 이전 보유분에 대한 배당이 늦게 들어오는 케이스를 허용해야 한다.
+        String ticker = requireTicker(trade);
+        if (ticker.isBlank()) {
+            throw new DomainException("DIVIDEND 거래에는 ticker 가 필요하다");
+        }
+        Money amount = requireCashAmount(trade);
+        requirePositive(amount, "DIVIDEND 금액은 0보다 커야 한다");
+        cashUsd = cashUsd.add(amount);
     }
 
     private void applySell(Trade trade) {

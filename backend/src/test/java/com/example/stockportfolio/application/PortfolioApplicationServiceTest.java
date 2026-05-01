@@ -15,6 +15,7 @@ import com.example.stockportfolio.domain.Quote;
 import com.example.stockportfolio.domain.TickerMeta;
 import com.example.stockportfolio.domain.TickerMetaRepository;
 import com.example.stockportfolio.domain.Trade;
+import com.example.stockportfolio.domain.TradeType;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -276,6 +277,99 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("DIVIDEND 누적: 보유 종목의 평가손익에 누적배당이 합산된다")
+    void view_dividendsAddedToHoldingPnl() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.of("500", Currency.USD),
+                Money.of("1500", Currency.USD),
+                Money.zero(Currency.USD)));
+        // AAPL 누적 배당 80 USD (예: 50 + 30)
+        repo.trades.add(Trade.dividend(Instant.parse("2026-03-01T00:00:00Z"),
+                "AAPL", Money.of("50", Currency.USD)));
+        repo.trades.add(Trade.dividend(Instant.parse("2026-04-01T00:00:00Z"),
+                "AAPL", Money.of("30", Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        // 평가손익 = (200-100)*10 + 80 = 1080
+        PositionView aapl = view.positions().get(0);
+        assertEquals(new BigDecimal("1080.0000"), aapl.unrealizedPnlUsd());
+        assertEquals(new BigDecimal("1512000.0000"), aapl.unrealizedPnlKrw());
+        // 합계 손익도 1080
+        assertEquals(new BigDecimal("1080.0000"), view.totalUnrealizedPnlUsd());
+    }
+
+    @Test
+    @DisplayName("DIVIDEND 누적: 미보유 종목(전량 매도 후 잔여) 배당도 전체 손익 합계에 포함된다")
+    void view_dividendsForUnheldTickerCountedInTotal() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.of("500", Currency.USD),
+                Money.of("1500", Currency.USD),
+                Money.zero(Currency.USD)));
+        // 보유 중 AAPL: 배당 20
+        repo.trades.add(Trade.dividend(Instant.parse("2026-03-01T00:00:00Z"),
+                "AAPL", Money.of("20", Currency.USD)));
+        // 보유하지 않는 OLD: 배당 7 — PositionView 에는 안 나오지만 합계에는 포함
+        repo.trades.add(Trade.dividend(Instant.parse("2026-03-15T00:00:00Z"),
+                "OLD", Money.of("7", Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        // AAPL 평가손익 = (200-100)*10 + 20 = 1020
+        // 전체 = 1020 + 7 = 1027
+        assertEquals(1, view.positions().size());
+        assertEquals(new BigDecimal("1020.0000"), view.positions().get(0).unrealizedPnlUsd());
+        assertEquals(new BigDecimal("1027.0000"), view.totalUnrealizedPnlUsd());
+    }
+
+    @Test
+    @DisplayName("DIVIDEND 누적: 시세 실패 종목의 배당은 종목 unrealizedPnl 은 null 이지만 합계에는 가산된다")
+    void view_dividendsForQuoteFailedTickerStillCountedInTotal() {
+        Map<String, Position> positions = new HashMap<>();
+        positions.put("AAPL", new Position("AAPL",
+                Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD)));
+        positions.put("BAD", new Position("BAD",
+                Quantity.of("5"), Money.of("50", Currency.USD), Money.zero(Currency.USD)));
+
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(positions,
+                Money.of("100", Currency.USD),
+                Money.of("100", Currency.USD),
+                Money.zero(Currency.USD)));
+        repo.trades.add(Trade.dividend(Instant.parse("2026-03-01T00:00:00Z"),
+                "BAD", Money.of("3", Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        market.fail("BAD");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        PositionView bad = view.positions().stream()
+                .filter(p -> p.ticker().equals("BAD")).findFirst().orElseThrow();
+        // 시세 실패 → 종목별 unrealizedPnl 는 null 유지
+        assertNull(bad.unrealizedPnlUsd());
+
+        // AAPL 평가손익 = (200-100)*10 = 1000, BAD 배당 3 가산 → 합계 1003
+        assertEquals(new BigDecimal("1003.0000"), view.totalUnrealizedPnlUsd());
+    }
+
+    @Test
     @DisplayName("응답 메타: usdKrwRate와 KST 오프셋 asOf가 채워진다")
     void view_includesRateAndKstAsOf() {
         FakeRepository repo = new FakeRepository();
@@ -333,6 +427,7 @@ class PortfolioApplicationServiceTest {
     static class FakeRepository implements PortfolioRepository {
         private Portfolio current = new Portfolio();
         final TreeMap<LocalDate, SnapshotView> snapshots = new TreeMap<>();
+        final List<Trade> trades = new ArrayList<>();
 
         void set(Portfolio p) {
             this.current = p;
@@ -349,9 +444,17 @@ class PortfolioApplicationServiceTest {
         }
         @Override public void recordTrade(Trade trade, Portfolio updatedState) {
             this.current = updatedState;
+            trades.add(trade);
         }
         @Override public List<Trade> listRecentTrades(int limit) {
             return List.of();
+        }
+        @Override public List<Trade> listTradesByType(TradeType type) {
+            List<Trade> filtered = new ArrayList<>();
+            for (Trade t : trades) {
+                if (t.type() == type) filtered.add(t);
+            }
+            return filtered;
         }
         @Override public List<Trade> listTradesByTicker(String ticker, int limit) {
             return List.of();

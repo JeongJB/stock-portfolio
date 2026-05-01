@@ -4,5 +4,6 @@ public enum TradeType {
     DEPOSIT,
     WITHDRAW,
     BUY,
-    SELL
+    SELL,
+    DIVIDEND
 }

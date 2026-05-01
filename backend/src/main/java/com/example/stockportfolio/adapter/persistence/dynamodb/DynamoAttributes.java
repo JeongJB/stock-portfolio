@@ -96,7 +96,7 @@ final class DynamoAttributes {
             item.put("cashAmount", n(c.amount()));
             item.put("cashCcy", s(c.currency().name()));
         });
-        // BUY/SELL 만 종목별 거래 조회용 GSI1 키 박제. DEPOSIT/WITHDRAW 는 키 부재 → 인덱스 자동 제외.
+        // BUY/SELL/DIVIDEND 만 종목별 거래 조회용 GSI1 키 박제. DEPOSIT/WITHDRAW 는 키 부재 → 인덱스 자동 제외.
         if (isTickerLinked(trade.type()) && trade.ticker() != null) {
             item.put(GSI1_PK, s(tickerPk(trade.ticker())));
             item.put(GSI1_SK, s(tradeSk(trade)));
@@ -105,7 +105,7 @@ final class DynamoAttributes {
     }
 
     private static boolean isTickerLinked(TradeType type) {
-        return type == TradeType.BUY || type == TradeType.SELL;
+        return type == TradeType.BUY || type == TradeType.SELL || type == TradeType.DIVIDEND;
     }
 
     static Trade tradeFromItem(Map<String, AttributeValue> item) {

@@ -23,6 +23,12 @@ public interface PortfolioRepository {
     List<Trade> listRecentTrades(int limit);
 
     /**
+     * 특정 type 거래 전체를 시간순(오름차순)으로 반환.
+     * 종목별 누적 배당 합산 등 도메인 집계 용도. 1인 사용자 가정 하에 페이지네이션 미적용.
+     */
+    List<Trade> listTradesByType(TradeType type);
+
+    /**
      * 특정 종목의 BUY/SELL 거래만 GSI1 (`gsi1pk = TICKER#&lt;sym&gt;`) 로 최신순 limit 개 반환.
      * DEPOSIT/WITHDRAW 는 GSI1 키가 없어 자동으로 제외된다. 보유 종목별 거래 이력 화면 등에서 사용.
      */

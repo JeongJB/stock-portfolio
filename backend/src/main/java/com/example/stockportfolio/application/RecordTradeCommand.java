@@ -31,22 +31,30 @@ public record RecordTradeCommand(
         return switch (type) {
             case DEPOSIT -> new Trade(id, TradeType.DEPOSIT, when,
                     null, null, null, null,
-                    Money.of(cashAmount, Currency.USD));
+                    cashMoney(cashAmount));
             case WITHDRAW -> new Trade(id, TradeType.WITHDRAW, when,
                     null, null, null, null,
-                    Money.of(cashAmount, Currency.USD));
+                    cashMoney(cashAmount));
             case BUY -> new Trade(id, TradeType.BUY, when,
                     ticker,
-                    Quantity.of(qty),
-                    Money.of(price, Currency.USD),
+                    qty != null ? Quantity.of(qty) : null,
+                    price != null ? Money.of(price, Currency.USD) : null,
                     fee != null ? Money.of(fee, Currency.USD) : Money.zero(Currency.USD),
                     null);
             case SELL -> new Trade(id, TradeType.SELL, when,
                     ticker,
-                    Quantity.of(qty),
-                    Money.of(price, Currency.USD),
+                    qty != null ? Quantity.of(qty) : null,
+                    price != null ? Money.of(price, Currency.USD) : null,
                     fee != null ? Money.of(fee, Currency.USD) : Money.zero(Currency.USD),
                     null);
+            case DIVIDEND -> new Trade(id, TradeType.DIVIDEND, when,
+                    ticker, null, null, null,
+                    cashMoney(cashAmount));
         };
+    }
+
+    private static Money cashMoney(BigDecimal amount) {
+        // null 일 때는 도메인 단계(Portfolio.apply)에서 DomainException 으로 변환되도록 그대로 null 전달.
+        return amount != null ? Money.of(amount, Currency.USD) : null;
     }
 }

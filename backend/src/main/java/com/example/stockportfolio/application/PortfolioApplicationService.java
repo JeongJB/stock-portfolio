@@ -12,6 +12,7 @@ import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Quote;
 import com.example.stockportfolio.domain.Trade;
+import com.example.stockportfolio.domain.TradeType;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,6 +70,16 @@ public class PortfolioApplicationService {
         BigDecimal usdKrwRate = marketDataPort.getUsdKrwRate();
         OffsetDateTime asOf = OffsetDateTime.now(clock.withZone(KST));
 
+        // 0단계: ticker 별 누적 배당 합 — DIVIDEND 거래 전체를 한 번 순회.
+        // 매도 후 잔여 배당(보유 0) 케이스도 합계 손익에 포함되도록 보유 여부와 무관하게 집계한다.
+        Map<String, BigDecimal> dividendsByTicker = new LinkedHashMap<>();
+        for (Trade t : repository.listTradesByType(TradeType.DIVIDEND)) {
+            String ticker = t.ticker();
+            Money amount = t.cashAmount();
+            if (ticker == null || amount == null) continue;
+            dividendsByTicker.merge(ticker, amount.amount(), BigDecimal::add);
+        }
+
         // 1단계: 시세 조회 (실패 격리). ticker 사전순으로 응답 안정성을 보장한다.
         Map<String, BigDecimal> lastPriceUsdByTicker = new LinkedHashMap<>();
         List<Position> sortedPositions = portfolio.positions().entrySet().stream()
@@ -100,6 +111,8 @@ public class PortfolioApplicationService {
         BigDecimal denominator = totalMarketValueUsd.add(cashUsd);
 
         // 3단계: 포지션 뷰 빌드.
+        // - 시세 가용 종목 unrealizedPnlUsd = (현재가-평균단가)*수량 + 해당 ticker 누적배당
+        // - 시세 실패 종목 unrealizedPnlUsd = null (시세에 의존), 단 누적배당은 전체 합계에 별도로 가산
         List<PositionView> positionViews = new ArrayList<>(sortedPositions.size());
         BigDecimal totalCostBasisUsd = BigDecimal.ZERO;
         BigDecimal totalUnrealizedPnlUsd = BigDecimal.ZERO;
@@ -122,7 +135,8 @@ public class PortfolioApplicationService {
                 marketValueUsd = scaleMoney(lastPriceUsd.multiply(qty));
                 marketValueKrw = toKrw(marketValueUsd, usdKrwRate);
                 weight = computeWeight(marketValueUsd, denominator);
-                unrealizedPnlUsd = scaleMoney(marketValueUsd.subtract(costBasisUsd));
+                BigDecimal tickerDividend = dividendsByTicker.getOrDefault(p.ticker(), BigDecimal.ZERO);
+                unrealizedPnlUsd = scaleMoney(marketValueUsd.subtract(costBasisUsd).add(tickerDividend));
                 unrealizedPnlKrw = toKrw(unrealizedPnlUsd, usdKrwRate);
                 totalUnrealizedPnlUsd = totalUnrealizedPnlUsd.add(unrealizedPnlUsd);
             }
@@ -140,6 +154,13 @@ public class PortfolioApplicationService {
                     weight,
                     unrealizedPnlUsd,
                     unrealizedPnlKrw));
+        }
+
+        // 시세 실패 종목 + 미보유 종목의 누적배당도 전체 손익 합계에는 포함한다.
+        // 시세 가용 종목은 위 루프에서 이미 unrealizedPnlUsd 에 포함됐으므로 여기서는 제외.
+        for (Map.Entry<String, BigDecimal> e : dividendsByTicker.entrySet()) {
+            if (lastPriceUsdByTicker.containsKey(e.getKey())) continue;
+            totalUnrealizedPnlUsd = totalUnrealizedPnlUsd.add(e.getValue());
         }
 
         BigDecimal cashWeight = computeWeight(cashUsd, denominator);

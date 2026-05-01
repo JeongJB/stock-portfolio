@@ -8,6 +8,7 @@ import com.example.stockportfolio.domain.Portfolio;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Trade;
+import com.example.stockportfolio.domain.TradeType;
 
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -170,6 +171,32 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
         for (Map<String, AttributeValue> item : response.items()) {
             Trade t = DynamoAttributes.tradeFromItem(item);
             if (seen.add(t.id())) {
+                trades.add(t);
+            }
+        }
+        return trades;
+    }
+
+    @Override
+    public List<Trade> listTradesByType(TradeType type) {
+        Objects.requireNonNull(type, "type");
+        // SK 오름차순(시간순) 으로 TRADE# prefix 전체 Query 후 type 필터.
+        // 1인 사용자 가정 하에 페이지네이션·서버측 필터 expression 없이 단순 클라이언트 필터.
+        QueryResponse response = client.query(QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
+                .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS(USER_PK),
+                        ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
+                .scanIndexForward(true)
+                .build());
+
+        List<Trade> trades = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            Trade t = DynamoAttributes.tradeFromItem(item);
+            if (t.type() == type && seen.add(t.id())) {
                 trades.add(t);
             }
         }

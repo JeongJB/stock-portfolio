@@ -8,6 +8,7 @@ import com.example.stockportfolio.domain.Portfolio;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Trade;
+import com.example.stockportfolio.domain.TradeType;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -79,6 +80,17 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
             return Collections.unmodifiableList(sorted);
         }
         return Collections.unmodifiableList(sorted.subList(0, limit));
+    }
+
+    @Override
+    public synchronized List<Trade> listTradesByType(TradeType type) {
+        List<Trade> filtered = new ArrayList<>();
+        for (Trade t : trades) {
+            if (t.type() == type) filtered.add(t);
+        }
+        // 시간 오름차순 — DynamoPortfolioRepository.listTradesByType 과 일관.
+        filtered.sort(Comparator.comparing(Trade::executedAt).thenComparing(Trade::id));
+        return Collections.unmodifiableList(filtered);
     }
 
     @Override

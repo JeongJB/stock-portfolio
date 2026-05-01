@@ -61,4 +61,9 @@ public record Trade(
         return new Trade(UUID.randomUUID().toString(), TradeType.SELL, executedAt,
                 ticker, qty, price, fee, null);
     }
+
+    public static Trade dividend(Instant executedAt, String ticker, Money amount) {
+        return new Trade(UUID.randomUUID().toString(), TradeType.DIVIDEND, executedAt,
+                ticker, null, null, null, amount);
+    }
 }
