@@ -1,14 +1,30 @@
+import { lazy, Suspense } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { CurrencyToggle } from './components/CurrencyToggle'
-import { Dashboard } from './pages/Dashboard'
-import { Trades } from './pages/Trades'
-import { Snapshots } from './pages/Snapshots'
-import { History } from './pages/History'
+
+const Dashboard = lazy(() =>
+  import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })),
+)
+const Trades = lazy(() =>
+  import('./pages/Trades').then((m) => ({ default: m.Trades })),
+)
+const Snapshots = lazy(() =>
+  import('./pages/Snapshots').then((m) => ({ default: m.Snapshots })),
+)
+const History = lazy(() =>
+  import('./pages/History').then((m) => ({ default: m.History })),
+)
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive
     ? 'font-medium text-slate-900 dark:text-slate-100'
     : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+
+function RouteFallback() {
+  return (
+    <p className="text-xs text-slate-500 dark:text-slate-400">로딩 중...</p>
+  )
+}
 
 export default function App() {
   return (
@@ -34,12 +50,14 @@ export default function App() {
         <CurrencyToggle />
       </header>
       <main>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/trades" element={<Trades />} />
-          <Route path="/snapshots" element={<Snapshots />} />
-          <Route path="/history" element={<History />} />
-        </Routes>
+        <Suspense fallback={<RouteFallback />}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/trades" element={<Trades />} />
+            <Route path="/snapshots" element={<Snapshots />} />
+            <Route path="/history" element={<History />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   )
