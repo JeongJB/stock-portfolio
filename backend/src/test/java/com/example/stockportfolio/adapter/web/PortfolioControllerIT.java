@@ -429,6 +429,49 @@ class PortfolioControllerIT {
     }
 
     @Test
+    void GET_trades_SELL_realizedPnlUsd가_채워지고_나머지_종류는_부재한다() throws Exception {
+        // 시드: DEPOSIT(10000) → BUY(10@150) → SELL(5@200, fee=1) → DIVIDEND
+        // 실현 손익 = (200-150)*5 - 1 = 249
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","executedAt":"2026-01-01T00:00:00Z","cashAmount":"10000"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"BUY","executedAt":"2026-01-02T00:00:00Z","ticker":"AAPL","qty":"10","price":"150"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"SELL","executedAt":"2026-01-03T00:00:00Z","ticker":"AAPL","qty":"5","price":"200","fee":"1"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DIVIDEND","executedAt":"2026-01-04T00:00:00Z","ticker":"AAPL","cashAmount":"3"}
+                                """))
+                .andExpect(status().isCreated());
+
+        // 시각 역순 ⇒ [DIVIDEND, SELL, BUY, DEPOSIT]
+        mockMvc.perform(get("/api/trades").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(4)))
+                .andExpect(jsonPath("$[0].type").value("DIVIDEND"))
+                .andExpect(jsonPath("$[0].realizedPnlUsd").doesNotExist())
+                .andExpect(jsonPath("$[1].type").value("SELL"))
+                .andExpect(jsonPath("$[1].realizedPnlUsd").value("249.0000"))
+                .andExpect(jsonPath("$[2].type").value("BUY"))
+                .andExpect(jsonPath("$[2].realizedPnlUsd").doesNotExist())
+                .andExpect(jsonPath("$[3].type").value("DEPOSIT"))
+                .andExpect(jsonPath("$[3].realizedPnlUsd").doesNotExist());
+    }
+
+    @Test
     void DELETE_trades_id는_거래를_삭제하고_갱신된_portfolio를_반환한다() throws Exception {
         // 입금만 있는 상태에서 그 입금을 삭제 → 잔고 0
         String body = mockMvc.perform(post("/api/trades")

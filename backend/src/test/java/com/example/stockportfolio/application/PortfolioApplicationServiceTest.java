@@ -463,6 +463,131 @@ class PortfolioApplicationServiceTest {
         assertEquals(9 * 3600, view.asOf().getOffset().getTotalSeconds(), "KST = +09:00");
     }
 
+    // --- recentTrades + realizedPnlUsd ---
+
+    @Test
+    @DisplayName("recentTrades: SELL 거래는 (매도가-평단)*수량-수수료 로 realizedPnlUsd 가 채워지고, 그 외는 null")
+    void recentTrades_sellHasRealizedPnl_othersNull() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        // DEPOSIT(10000) → BUY 10주 @150, fee 0 → SELL 5주 @ 200, fee 1 → DIVIDEND
+        // 평단 150, 매도 손익 = (200-150)*5 - 1 = 249
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        Trade sell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("200"),
+                new BigDecimal("1"), null, null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DIVIDEND, Instant.parse("2026-01-04T00:00:00Z"),
+                "AAPL", null, null, null, new BigDecimal("3"), null));
+
+        // recentTrades 내부 listRecentTrades 가 빈 리스트(테스트 fake) 라 직접 listAllTrades 결과를
+        // listRecentTrades 와 동일하게 노출시키려면 fake 보강이 필요. 아래 hack: fake 의 trades 를 그대로 반환.
+        repo.listRecentReturnsAll = true;
+
+        List<com.example.stockportfolio.adapter.web.dto.TradeView> views = service.recentTrades(10);
+
+        com.example.stockportfolio.adapter.web.dto.TradeView sellView = views.stream()
+                .filter(v -> v.tradeId().equals(sell.id()))
+                .findFirst().orElseThrow();
+        assertNotNull(sellView.realizedPnlUsd(), "SELL 의 realizedPnlUsd 는 null 이 아니다");
+        assertEquals(0, sellView.realizedPnlUsd().compareTo(new BigDecimal("249.0000")),
+                "실현 손익 = (200-150)*5 - 1 = 249 (실제: " + sellView.realizedPnlUsd() + ")");
+
+        // SELL 외 모든 거래는 realizedPnlUsd null
+        for (com.example.stockportfolio.adapter.web.dto.TradeView v : views) {
+            if (v.tradeId().equals(sell.id())) continue;
+            assertNull(v.realizedPnlUsd(),
+                    v.type() + " 거래의 realizedPnlUsd 는 null 이어야 한다 (실제: " + v.realizedPnlUsd() + ")");
+        }
+    }
+
+    @Test
+    @DisplayName("recentTrades: 다중 BUY 후 부분 SELL → 가중평균 단가 기반 손익")
+    void recentTrades_weightedAvgCostUsedForPartialSell() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        // DEPOSIT 10000
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        // BUY 10주 @100 (총가치 1000) → 평단 100
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null));
+        // BUY 10주 @200 (총가치 2000) → 누적 20주, 가치 3000, 평단 150
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("200"),
+                BigDecimal.ZERO, null, null));
+        // SELL 5주 @ 250 fee 0 → (250-150)*5 = 500
+        Trade sell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-04T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("250"),
+                BigDecimal.ZERO, null, null));
+
+        repo.listRecentReturnsAll = true;
+        List<com.example.stockportfolio.adapter.web.dto.TradeView> views = service.recentTrades(10);
+
+        com.example.stockportfolio.adapter.web.dto.TradeView sellView = views.stream()
+                .filter(v -> v.tradeId().equals(sell.id()))
+                .findFirst().orElseThrow();
+        assertEquals(0, sellView.realizedPnlUsd().compareTo(new BigDecimal("500.0000")),
+                "실현 손익 = (250-150)*5 = 500 (실제: " + sellView.realizedPnlUsd() + ")");
+    }
+
+    @Test
+    @DisplayName("recentTrades: 부분 매도 후 추가 매수 → 평단 변동 반영, 두 번째 SELL 손익도 정확")
+    void recentTrades_avgCostStableAfterPartialSellThenAdjustsOnNewBuy() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        // DEPOSIT 10000 → BUY 10@100 (평단 100, 잔량 10)
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null));
+        // SELL 4@150 → (150-100)*4 = 200, 잔량 6, 평단 100 유지
+        Trade firstSell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("4"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        // BUY 4@200 → 잔량 10, 가치 6*100 + 4*200 = 1400, 평단 140
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-04T00:00:00Z"),
+                "AAPL", new BigDecimal("4"), new BigDecimal("200"),
+                BigDecimal.ZERO, null, null));
+        // SELL 5@180 → (180-140)*5 = 200
+        Trade secondSell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-05T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("180"),
+                BigDecimal.ZERO, null, null));
+
+        repo.listRecentReturnsAll = true;
+        List<com.example.stockportfolio.adapter.web.dto.TradeView> views = service.recentTrades(10);
+
+        com.example.stockportfolio.adapter.web.dto.TradeView firstSellView = views.stream()
+                .filter(v -> v.tradeId().equals(firstSell.id())).findFirst().orElseThrow();
+        com.example.stockportfolio.adapter.web.dto.TradeView secondSellView = views.stream()
+                .filter(v -> v.tradeId().equals(secondSell.id())).findFirst().orElseThrow();
+        assertEquals(0, firstSellView.realizedPnlUsd().compareTo(new BigDecimal("200.0000")),
+                "첫 SELL: (150-100)*4 = 200");
+        assertEquals(0, secondSellView.realizedPnlUsd().compareTo(new BigDecimal("200.0000")),
+                "두 번째 SELL: (180-140)*5 = 200");
+    }
+
     // --- deleteTrade ---
 
     @Test
@@ -796,6 +921,8 @@ class PortfolioApplicationServiceTest {
         private Portfolio current = new Portfolio();
         final TreeMap<LocalDate, SnapshotView> snapshots = new TreeMap<>();
         final List<Trade> trades = new ArrayList<>();
+        // recentTrades 검증용: true 면 listRecentTrades 가 trades 를 시각 역순 limit 로 반환.
+        boolean listRecentReturnsAll = false;
 
         void set(Portfolio p) {
             this.current = p;
@@ -815,7 +942,11 @@ class PortfolioApplicationServiceTest {
             trades.add(trade);
         }
         @Override public List<Trade> listRecentTrades(int limit) {
-            return List.of();
+            if (!listRecentReturnsAll) return List.of();
+            List<Trade> sorted = new ArrayList<>(trades);
+            sorted.sort(java.util.Comparator.comparing(Trade::executedAt).reversed()
+                    .thenComparing(Trade::id));
+            return sorted.subList(0, Math.min(limit, sorted.size()));
         }
         @Override public List<Trade> listAllTrades() {
             List<Trade> sorted = new ArrayList<>(trades);

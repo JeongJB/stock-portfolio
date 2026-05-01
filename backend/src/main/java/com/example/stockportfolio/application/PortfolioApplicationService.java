@@ -439,9 +439,55 @@ public class PortfolioApplicationService {
     }
 
     public List<TradeView> recentTrades(int limit) {
+        // SELL 거래의 실현 손익을 채우려면 그 시점 직전까지 ticker 별 (qty, avgCost) 가 필요하므로
+        // 전체 거래를 시간순 한 번 replay 해 SELL id → realizedPnl 맵을 만든다. 1인용 + append-only 가정 하 비용 무시 가능.
+        Map<String, BigDecimal> realizedByTradeId = computeRealizedPnlBySellTradeId();
         return repository.listRecentTrades(limit).stream()
-                .map(TradeView::from)
+                .map(t -> TradeView.from(t, realizedByTradeId.get(t.id())))
                 .toList();
+    }
+
+    /**
+     * 시간 오름차순으로 모든 BUY/SELL 거래를 replay 해 각 SELL 의 실현 손익(USD) 을 계산한다.
+     * 평균단가는 BUY 시 가중평균으로 갱신, SELL 시 유지(전량 매도면 0 으로 리셋). 수수료는 손익을 깎는다.
+     * 결과는 SELL 거래 id → 실현 손익 맵.
+     */
+    private Map<String, BigDecimal> computeRealizedPnlBySellTradeId() {
+        Map<String, BigDecimal> result = new HashMap<>();
+        Map<String, BigDecimal> qtyByTicker = new HashMap<>();
+        Map<String, BigDecimal> avgCostByTicker = new HashMap<>();
+        for (Trade t : repository.listAllTrades()) {
+            if (t.type() != TradeType.BUY && t.type() != TradeType.SELL) continue;
+            String ticker = t.ticker();
+            if (ticker == null || t.qty() == null || t.price() == null) continue;
+            BigDecimal qty = qtyByTicker.getOrDefault(ticker, BigDecimal.ZERO);
+            BigDecimal avgCost = avgCostByTicker.getOrDefault(ticker, BigDecimal.ZERO);
+            BigDecimal tradeQty = t.qty().value();
+            BigDecimal tradePrice = t.price().amount();
+            if (t.type() == TradeType.BUY) {
+                BigDecimal newQty = qty.add(tradeQty);
+                BigDecimal existingValue = avgCost.multiply(qty);
+                BigDecimal incomingValue = tradePrice.multiply(tradeQty);
+                BigDecimal newAvg = newQty.signum() == 0
+                        ? BigDecimal.ZERO
+                        : existingValue.add(incomingValue).divide(newQty, Money.SCALE, Money.ROUNDING);
+                qtyByTicker.put(ticker, newQty);
+                avgCostByTicker.put(ticker, newAvg);
+            } else { // SELL
+                BigDecimal fee = t.feeOpt().map(m -> m.amount()).orElse(BigDecimal.ZERO);
+                BigDecimal pnlPerShare = tradePrice.subtract(avgCost);
+                BigDecimal realized = pnlPerShare.multiply(tradeQty).subtract(fee)
+                        .setScale(Money.SCALE, Money.ROUNDING);
+                result.put(t.id(), realized);
+                BigDecimal newQty = qty.subtract(tradeQty);
+                qtyByTicker.put(ticker, newQty);
+                if (newQty.signum() == 0) {
+                    avgCostByTicker.put(ticker, BigDecimal.ZERO);
+                }
+                // 부분 매도 시 avgCost 는 유지 (가중평균 단가 정의).
+            }
+        }
+        return result;
     }
 
     /**

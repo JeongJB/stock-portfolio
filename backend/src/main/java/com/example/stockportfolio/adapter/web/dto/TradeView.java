@@ -22,10 +22,16 @@ public record TradeView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal price,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal fee,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashAmount,
-        String memo
+        String memo,
+        // SELL 거래의 실현 손익 USD. (매도가 - 그 시점 평균단가) × 수량 - 수수료. SELL 외 type 은 null.
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal realizedPnlUsd
 ) {
 
     public static TradeView from(Trade trade) {
+        return from(trade, null);
+    }
+
+    public static TradeView from(Trade trade, BigDecimal realizedPnlUsd) {
         return new TradeView(
                 trade.id(),
                 trade.type(),
@@ -35,6 +41,7 @@ public record TradeView(
                 trade.price() != null ? trade.price().amount() : null,
                 trade.fee() != null ? trade.fee().amount() : null,
                 trade.cashAmount() != null ? trade.cashAmount().amount() : null,
-                trade.memo());
+                trade.memo(),
+                realizedPnlUsd);
     }
 }
