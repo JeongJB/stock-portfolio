@@ -399,6 +399,8 @@ public class PortfolioApplicationService {
                 toKrw(totalCostBasisUsd, usdKrwRate),
                 scaleMoney(totalUnrealizedPnlUsd),
                 toKrw(totalUnrealizedPnlUsd, usdKrwRate),
+                scaleMoney(currentTotalUsd),
+                toKrw(currentTotalUsd, usdKrwRate),
                 usdKrwRate,
                 asOf,
                 positionViews,

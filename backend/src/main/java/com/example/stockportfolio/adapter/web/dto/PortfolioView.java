@@ -29,6 +29,9 @@ public record PortfolioView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalCostBasisKrw,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlUsd,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlKrw,
+        // 총자산 = 현금 + 평가액. 단순 합산이지만 응답에 박제해 프론트의 부동소수 합산을 회피.
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalAssetsUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalAssetsKrw,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal usdKrwRate,
         OffsetDateTime asOf,
         List<PositionView> positions,
