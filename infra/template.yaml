@@ -227,6 +227,12 @@ Resources:
             RestApiId: !Ref BackendApi
             Path: /api/{proxy+}
             Method: POST
+        ApiDelete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BackendApi
+            Path: /api/{proxy+}
+            Method: DELETE
         ApiOptions:
           Type: Api
           Properties:
