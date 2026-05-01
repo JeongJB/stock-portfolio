@@ -51,6 +51,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | --- | --- |
 | P1-1 종목 META + 거래소 자동 탐색 | `TickerMeta` 도메인 + `TickerMetaRepository` 포트 + `DynamoTickerMetaRepository` 어댑터. `ExchangeResolver` 가 ticker→exchange 결정 (META 없음→NAS/NYS/AMS 탐색, 카운터≥3→재탐색). `PortfolioApplicationService` 의 `DEFAULT_EXCHANGE` 하드코딩 제거 + view() 내 자기치유 (성공 시 카운터 0 리셋, 실패 시 +1). 거래 PUT 시 BUY/SELL 만 GSI1 키(`gsi1pk=TICKER#<sym>`, `gsi1sk=TRADE#<isoTs>`) 박제. `listTradesByTicker` 메서드 추가 (P2 대비). cron 미도입 — view() 안에서 자기치유. |
 | P1-2 시세 캐시 10분 슬롯화 | DynamoQuoteCache SK 를 `QUOTE#yyyyMMddHHmm` (KST 10분 floor) 로 변경, TTL 36h→1h. QuoteCachePort 시그니처 LocalDate→Instant. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. |
+| P1-3 application.yml 전환 | application.properties → yml 변환, properties 삭제. 환경별 분기 쉬워짐. |
 
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 
@@ -76,7 +77,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
    - 백업/내보내기.
-   - `application.properties` 를 `application.yml` 형태로 변경 — 환경별 분기 쉬워짐.
 2. **P2 후속**:
    - FE-6 거래 내역 표(GSI1 도입 후).
    - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.

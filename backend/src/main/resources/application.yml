@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: stock-portfolio
+  cloud:
+    function:
+      definition: apiGatewayHandler
+
+kis:
+  base-url: ${KIS_BASE_URL:https://openapi.koreainvestment.com:9443}
+  appkey-parameter: ${KIS_APPKEY_PARAMETER:/portfolio/kis/app-key}
+  appsecret-parameter: ${KIS_APPSECRET_PARAMETER:/portfolio/kis/app-secret}
+  fx-probe-symbol: ${KIS_FX_PROBE_SYMBOL:AAPL}
+  fx-probe-exchange: ${KIS_FX_PROBE_EXCHANGE:NAS}
+
+fx:
+  fallback-url: ${FX_FALLBACK_URL:https://api.frankfurter.app}
+
+aws:
+  region: ${AWS_REGION:ap-northeast-2}
+
+portfolio:
+  table-name: ${PORTFOLIO_TABLE_NAME:Portfolio}
