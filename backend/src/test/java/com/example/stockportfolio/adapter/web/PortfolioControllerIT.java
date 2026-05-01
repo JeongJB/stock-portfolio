@@ -546,7 +546,7 @@ class PortfolioControllerIT {
                 java.time.LocalDate.parse(date),
                 java.time.OffsetDateTime.parse(date + "T09:00:00+09:00"),
                 new java.math.BigDecimal("1400"),
-                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
+                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
                 java.util.List.of());
     }
 

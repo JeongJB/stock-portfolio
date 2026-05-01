@@ -251,6 +251,8 @@ class DynamoPortfolioRepositoryIT {
 
     private static SnapshotView sampleSnapshot(String date, String cashUsd) {
         BigDecimal cash = new BigDecimal(cashUsd);
+        BigDecimal totalAssetsUsd = cash.add(new BigDecimal("2000.0000"));
+        BigDecimal totalAssetsKrw = cash.multiply(new BigDecimal("1400")).add(new BigDecimal("2800000.0000"));
         return new SnapshotView(
                 LocalDate.parse(date),
                 OffsetDateTime.parse(date + "T09:00:00+09:00"),
@@ -265,6 +267,8 @@ class DynamoPortfolioRepositoryIT {
                 new BigDecimal("1400000.0000"),
                 new BigDecimal("1000.0000"),
                 new BigDecimal("1400000.0000"),
+                totalAssetsUsd,
+                totalAssetsKrw,
                 List.of(new PositionView(
                         "AAPL",
                         new BigDecimal("10"),

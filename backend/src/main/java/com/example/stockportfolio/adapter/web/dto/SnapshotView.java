@@ -29,6 +29,10 @@ public record SnapshotView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalCostBasisKrw,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlUsd,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalUnrealizedPnlKrw,
+        // 총자산 = 현금 + 평가액. 박제 시점에 계산해 응답에 싣고, 영속 시엔 별도 attribute 로
+        // 저장하지 않는다 (cashUsd + totalMarketValueUsd 로 derive 가능 — 옛 항목도 자연 호환).
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalAssetsUsd,
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal totalAssetsKrw,
         List<PositionView> positions
 ) {
 }

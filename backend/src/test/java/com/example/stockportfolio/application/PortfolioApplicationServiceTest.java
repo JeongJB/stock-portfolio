@@ -882,7 +882,7 @@ class PortfolioApplicationServiceTest {
                 LocalDate.parse(isoDate),
                 java.time.OffsetDateTime.parse(isoDate + "T09:00:00+09:00"),
                 new BigDecimal("1400"),
-                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
+                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
                 List.of());
     }
 

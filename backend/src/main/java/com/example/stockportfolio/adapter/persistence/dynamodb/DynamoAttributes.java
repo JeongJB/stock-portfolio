@@ -216,20 +216,29 @@ final class DynamoAttributes {
     }
 
     static SnapshotView snapshotFromItem(Map<String, AttributeValue> item) {
+        BigDecimal cashUsd = new BigDecimal(item.get("cashUsd").n());
+        BigDecimal cashKrw = new BigDecimal(item.get("cashKrw").n());
+        BigDecimal totalMarketValueUsd = new BigDecimal(item.get("totalMarketValueUsd").n());
+        BigDecimal totalMarketValueKrw = new BigDecimal(item.get("totalMarketValueKrw").n());
+        // totalAssets 는 별도 attribute 로 저장하지 않고 read 시 derive — 옛 항목도 자연 호환.
+        BigDecimal totalAssetsUsd = cashUsd.add(totalMarketValueUsd);
+        BigDecimal totalAssetsKrw = cashKrw.add(totalMarketValueKrw);
         return new SnapshotView(
                 LocalDate.parse(item.get("date").s()),
                 OffsetDateTime.parse(item.get("takenAt").s()),
                 new BigDecimal(item.get("usdKrwRate").n()),
-                new BigDecimal(item.get("cashUsd").n()),
-                new BigDecimal(item.get("cashKrw").n()),
+                cashUsd,
+                cashKrw,
                 new BigDecimal(item.get("principalUsd").n()),
                 new BigDecimal(item.get("principalKrw").n()),
-                new BigDecimal(item.get("totalMarketValueUsd").n()),
-                new BigDecimal(item.get("totalMarketValueKrw").n()),
+                totalMarketValueUsd,
+                totalMarketValueKrw,
                 new BigDecimal(item.get("totalCostBasisUsd").n()),
                 new BigDecimal(item.get("totalCostBasisKrw").n()),
                 new BigDecimal(item.get("totalUnrealizedPnlUsd").n()),
                 new BigDecimal(item.get("totalUnrealizedPnlKrw").n()),
+                totalAssetsUsd,
+                totalAssetsKrw,
                 deserializePositions(item.get("positions").s()));
     }
 
