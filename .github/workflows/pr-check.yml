@@ -1,0 +1,92 @@
+name: pr-check
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'infra/template.yaml'
+              - 'infra/deploy.sh'
+              - '.github/workflows/backend-deploy.yml'
+              - '.github/workflows/pr-check.yml'
+            frontend:
+              - 'frontend/**'
+              - 'infra/deploy-frontend.sh'
+              - '.github/workflows/frontend-deploy.yml'
+              - '.github/workflows/pr-check.yml'
+
+  backend-check:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 25 (Corretto)
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: 25
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: chmod +x backend/gradlew
+
+      - name: Run backend tests
+        run: backend/gradlew -p backend test
+
+      - name: Build shadowJar
+        run: backend/gradlew -p backend shadowJar
+
+  frontend-check:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm --prefix frontend ci
+
+      # client.ts 가 VITE_API_BASE_URL/VITE_API_KEY 를 `?? ''` 로 fallback 하므로
+      # PR 빌드 시 env 미주입이어도 빌드 자체는 통과한다 (실제 호출은 못 함).
+      - name: Build frontend
+        run: npm --prefix frontend run build

@@ -1,0 +1,72 @@
+name: backend-deploy
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'backend/**'
+      - 'infra/template.yaml'
+      - 'infra/deploy.sh'
+      - '.github/workflows/backend-deploy.yml'
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 25 (Corretto)
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: 25
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: chmod +x backend/gradlew
+
+      - name: Run backend tests
+        run: backend/gradlew -p backend test
+
+      - name: Build shadowJar
+        run: backend/gradlew -p backend shadowJar
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          audience: sts.amazonaws.com
+
+      - name: Setup AWS SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      # samconfig.toml 에 stack_name / region / capabilities / parameter_overrides 가
+      # 모두 박혀 있어 추가 인자 불필요. deploy.sh 가 SSM 의 BasicAuthHash 를 주입.
+      - name: SAM deploy
+        run: bash infra/deploy.sh --no-confirm-changeset --no-fail-on-empty-changeset
+
+      - name: Verify Lambda update
+        run: |
+          aws lambda get-function \
+            --function-name stock-portfolio-prod-api \
+            --region ap-northeast-2 \
+            --query 'Configuration.LastModified' \
+            --output text

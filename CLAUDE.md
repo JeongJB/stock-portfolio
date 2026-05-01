@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 루트의 `.claude/`, `CLAUDE.md`, `.gitignore`, `.gitattributes`는 모노리포 전체에 적용되는 자산이다.
 
-현재 상태(2026-04-29): **백엔드 P0(P0-1 ~ P0-4d) + 프론트엔드 P0-FE(FE-0 ~ FE-3) + FE-4 + FE-5(a/b/c/f) 완료 + F-CHECK 실사용 검증 완료** — 베이스라인 기능 1·2·3·4가 dev 환경에서 동작 확인됨. AWS SAM 으로 백엔드 Lambda + API Gateway + DynamoDB + 프론트엔드 S3/CloudFront + 운영 알람(SNS 이메일)까지 IaC 화. 남은 P1-FE 는 FE-5e(GitHub Actions). 자세한 진척·다음 단계는 [진행 로드맵](#진행-로드맵-재개-가이드) 섹션 참고.
+현재 상태(2026-05-01): **백엔드 P0(P0-1 ~ P0-4d) + 프론트엔드 P0-FE(FE-0 ~ FE-3) + FE-4 + FE-5(a/b/c/e/f) 완료 + F-CHECK 실사용 검증 완료** — 베이스라인 기능 1·2·3·4가 dev 환경에서 동작 확인됨. AWS SAM 으로 백엔드 Lambda + API Gateway + DynamoDB + 프론트엔드 S3/CloudFront + 운영 알람(SNS 이메일)까지 IaC 화 + GitHub Actions 자동 배포(OIDC)까지 완료. P1-FE 전구간 종료. 자세한 진척·다음 단계는 [진행 로드맵](#진행-로드맵-재개-가이드) 섹션 참고.
 
 ### 사용자가 명시한 베이스라인 기능
 
@@ -61,26 +61,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | FE-4 PWA 아이콘·매니페스트 마무리 | treemap 모티프 6박스 형형색색 아이콘(`favicon.svg` / `master-maskable.svg` 마스터 + `pwa-192.png` / `pwa-512.png` / `pwa-maskable-512.png` purpose 분리), 매니페스트 `id`·`scope`·`lang`·`categories`·`display_override` 보강, `includeAssets` 누락 자산 정리. iOS 자산은 의도적 제외(Android 단독 사용). |
 | FE-5a/b/c IaC + 배포 | AWS SAM `infra/template.yaml` — DynamoDB(PITR + GSI1, 소문자 `pk/sk`) / Lambda(`shadowJar` + `META-INF/spring/*.imports` 라인 병합) / API Gateway(`/api/{proxy+}` GET·POST·OPTIONS 분리, OPTIONS 만 ApiKeyRequired:false) / Usage plan + API key / S3 비공개 + CloudFront + OAC + SPA viewer-request 리라이트. 프론트 배포는 `infra/deploy-frontend.sh` (assets long-cache, 그 외 no-cache, invalidate). |
 | FE-5f 운영 가시성 | CloudWatch LogGroup 14일 보존 + SNS Topic/이메일 구독(`surpatience@gmail.com`) + Lambda `Errors > 0`(5분, `notBreaching`) 단일 알람. `docs/deploy.md` 1페이지 빠른 참조 신규. 추가 메트릭 알람은 1인용에 과하므로 도입 안 함. |
+| FE-5e GitHub Actions 자동 배포 | 워크플로 3개(backend-deploy / frontend-deploy / pr-check) + OIDC IAM Role + 권한·trust policy JSON 리포 박제. master push 자동 배포, PR 은 build/test 만. `AWS_ROLE_ARN` 1개만 GitHub Secret. `VITE_API_KEY` 는 Secrets 미보관 — 워크플로 런타임에 API Gateway 에서 즉시 추출 후 add-mask. |
 
 ### 다음 단계 (재개 시 이 순서)
 
-1. **FE-5e GitHub Actions 자동 배포 (남은 P1-FE)**:
-   - **워크플로 분리**: `.github/workflows/backend-deploy.yml`(`backend/**`·`infra/template.yaml` 변경 시), `.github/workflows/frontend-deploy.yml`(`frontend/**`·`infra/deploy-frontend.sh` 변경 시). path filter + `workflow_dispatch` 수동 트리거.
-   - **OIDC 기반 AWS 자격증명**: GitHub Actions OIDC provider(`token.actions.githubusercontent.com`)를 IAM 에 등록하고, 두 워크플로가 assume 할 IAM Role 1개를 trust policy 로 이 저장소(`repo:<owner>/<repo>:ref:refs/heads/master`)에 한정. **장기 액세스 키 미사용** — Secrets 에 `AWS_ROLE_ARN`만 둔다.
-   - **백엔드 워크플로**: `actions/setup-java@v4` (Corretto 25, gradle 캐시) → `backend/gradlew -p backend test` → `shadowJar` → `aws-actions/configure-aws-credentials@v4` (OIDC) → `cd infra && sam deploy --no-confirm-changeset --no-fail-on-empty-changeset`. KIS 시크릿은 SSM 에 이미 박제돼 워크플로에서 다루지 않음.
-   - **프론트 워크플로**: `actions/setup-node@v4` (npm 캐시) → AWS configure (OIDC) → CloudFormation Outputs 에서 `BackendApiInvokeUrl` 추출 + API Gateway 에서 `API_KEY` 추출 → `VITE_API_BASE_URL`/`VITE_API_KEY` env 로 빌드 → `infra/deploy-frontend.sh` 호출. **`VITE_API_KEY` 는 Secrets 에 저장하지 않고** 워크플로 런타임에 즉시 추출(회전 시 재배포만 하면 자동 갱신).
-   - **PR 정책**: master push + workflow_dispatch 만 배포. PR 에는 빌드/테스트만 돌리고 배포 안 함(별도 `pr-check.yml` 또는 같은 워크플로의 조건 분기).
-   - **검증**: 첫 master push 가 자동 트리거 → CloudFormation 콘솔에서 changeset 적용 확인. `aws lambda get-function --function-name stock-portfolio-prod-api --query 'Configuration.LastModified'` 로 갱신 시각 확인.
-   - **대안 / 보류**: 캐시 무효화/시크릿 회전 같은 운영 1회 작업까지 워크플로에 묶지 않는다 — 1인용엔 과함. 운영 가이드는 [docs/deploy.md](docs/deploy.md) / [infra/README.md](infra/README.md) 그대로.
-2. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
-   - EOD 자동 스냅샷 — EventBridge cron + Lambda 핸들러(`takeSnapshot()` 재사용).
+1. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
    - 종목 마스터(`TICKER#<sym>/META`) + GSI1 종목별 거래 조회 — 다거래소(NYSE/NAS/AMS) 자동 탐색·저장 방식. **사용자는 ticker만 입력**하고, 백엔드가 첫 매수 거래 처리 시 NAS → NYS → AMS 순으로 KIS 시세 조회를 시도해 가장 먼저 성공한 거래소를 META에 박제. 이후 시세 조회는 META의 거래소를 그대로 사용해 1콜로 끝낸다. 거래소 탐색 결과는 종목별로 한 번만 결정되므로 비용·지연 영향 미미. (현재 GEV 같은 NYSE 종목이 NAS 고정 조회로 시세 미조회되는 문제를 동시에 해소.)
    - 거래소 이전 주기 재검증 — 종목이 NYSE↔NASDAQ 등으로 거래소를 이전하는 경우가 있으므로 META의 거래소가 영구히 유효하다고 가정하지 않는다. EOD 스냅샷이나 별도 EventBridge cron(주 1회 등)에서 META 거래소 기준 시세 조회가 N회 연속 실패한 종목만 NAS → NYS → AMS 재탐색 수행 후 META 갱신. 매번 모든 종목을 재탐색하면 호출량이 폭증하므로 "실패 시에만 재탐색"이 핵심.
+   - 시세 캐시 주기 단축 — 현재 KST 일자 단위(`CachingMarketDataAdapter.java:44`의 `kstToday` SK)에서 **10분 슬롯 단위**로 변경. SK 를 `QUOTE#<KST yyyy-MM-dd HH:mm>`(분을 10분으로 라운딩) 형태로 바꾸고 DynamoDB `ttl` 도 1~2시간으로 단축. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. 장 마감/주말엔 슬롯이 바뀌어도 응답 동일하므로 실질 호출 증가 적음.
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
    - 백업/내보내기.
-   - `application.properties` 를 `application.yml` 형태로 변경 — 환경별 분기 쉬워짐. FE-5e 와는 독립.
-3. **P2 후속**:
+   - `application.properties` 를 `application.yml` 형태로 변경 — 환경별 분기 쉬워짐.
+2. **P2 후속**:
    - FE-6 거래 내역 표(GSI1 도입 후).
    - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.
    - FE-8 매수 폼 기존 종목 빠른 추가매수 — 신규 매수와 추가 매수가 모두 빈번하므로 ticker 자유 입력은 유지하되, 보유 종목을 한눈에 보여주는 select/자동완성을 같은 폼에서 토글 가능하게 노출. 기존 종목 선택 시 ticker 자동 채움 + 평균단가·수량 힌트로 추가매수 입력 부담 감소(가격·수량은 이번 거래 값이라 비워둠).
@@ -88,12 +81,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - recharts 청크 분할 등 성능 미세 조정.
    - SnapStart 적용 검토 — 현재 콜드 스타트 5~10초 수용 중. 1인용 빈도엔 체감 거슬리지 않음 → 우선순위 낮음.
    - X-Ray / 추가 알람(요청량·throttle 메트릭) — 1인용엔 과함. 정말 필요해질 때만.
+   - 한국에서만 접속할 계획이므로 다른 국가에서의 접근 차단.
 
-### 운영 1회 작업 (FE-5e 진행 전 사용자가 처리할 것)
+### 운영 1회 작업 (FE-5e 적용 시 사용자가 처리할 것)
 
-- GitHub OIDC provider 등록(없으면 신규): `aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com`
-- 워크플로 전용 IAM Role 생성 + trust policy 에 저장소·브랜치 한정 sub claim 박제. 권한은 SAM 배포에 필요한 cloudformation/lambda/apigateway/s3/dynamodb/iam:PassRole 등 (자세한 권한 묶음은 [infra/README.md](infra/README.md) "사전 IAM 권한" 섹션 또는 FE-5e 발주 시 정리).
-- 저장소 `Settings → Secrets and variables → Actions` 에 `AWS_ROLE_ARN` 1개만 등록.
+1. `aws iam create-role` + `put-role-policy` (`infra/iam/` JSON 사용 — `<ACCOUNT_ID>` 치환 후). 상세 명령은 [infra/iam/README.md](infra/iam/README.md).
+2. `gh secret set AWS_ROLE_ARN --repo JeongJB/stock-portfolio --body "..."`.
+3. 첫 master push → Actions 탭에서 두 워크플로 자동 트리거 확인.
 
 ## 기술 스택
 
