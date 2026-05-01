@@ -8,6 +8,7 @@ import com.example.stockportfolio.adapter.web.dto.RecordTradeResponse;
 import com.example.stockportfolio.adapter.web.dto.SnapshotListResponse;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.application.PortfolioApplicationService;
+import com.example.stockportfolio.application.TradeReplayValidationException;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Trade;
 import tools.jackson.databind.ObjectMapper;
@@ -17,9 +18,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -92,8 +96,19 @@ public class LambdaConfig {
                     return ok(mapper.writeValueAsString(
                             new SnapshotListResponse(service.listSnapshots(from, to))));
                 }
+                if ("DELETE".equalsIgnoreCase(method)) {
+                    String tradeId = extractTradeIdOrNull(path);
+                    if (tradeId != null) {
+                        service.deleteTrade(tradeId);
+                        return ok(mapper.writeValueAsString(service.view()));
+                    }
+                }
 
                 return notFound(path);
+            } catch (NoSuchElementException ex) {
+                return notFoundBody(ex.getMessage());
+            } catch (TradeReplayValidationException ex) {
+                return validationFailed(ex.getMessage());
             } catch (DomainException ex) {
                 return badRequest(ex.getMessage());
             } catch (Exception ex) {
@@ -124,8 +139,29 @@ public class LambdaConfig {
         return response(404, "{\"error\":\"not_found\",\"path\":\"" + path + "\"}");
     }
 
+    private static APIGatewayProxyResponseEvent notFoundBody(String message) {
+        return response(404, "{\"error\":\"not_found\",\"message\":" + quote(message) + "}");
+    }
+
+    private static APIGatewayProxyResponseEvent validationFailed(String message) {
+        return response(422, "{\"error\":\"validation_failed\",\"message\":" + quote(message) + "}");
+    }
+
     private static APIGatewayProxyResponseEvent badRequest(String message) {
         return response(400, "{\"error\":\"domain_error\",\"message\":" + quote(message) + "}");
+    }
+
+    /**
+     * /api/trades/{id} 패턴에서 id 만 뽑는다. 다른 경로면 null.
+     * URL 인코딩된 id (UUID 는 인코딩 영향 없음이지만 일반화) 도 디코드.
+     */
+    private static String extractTradeIdOrNull(String path) {
+        if (path == null) return null;
+        int idx = path.indexOf("/api/trades/");
+        if (idx < 0) return null;
+        String id = path.substring(idx + "/api/trades/".length());
+        if (id.isBlank() || id.contains("/")) return null;
+        return URLDecoder.decode(id, StandardCharsets.UTF_8);
     }
 
     private static APIGatewayProxyResponseEvent serverError(Exception ex) {
