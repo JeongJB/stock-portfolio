@@ -115,3 +115,18 @@ export function formatKstDate(date: Date = new Date()): string {
   const lookup = Object.fromEntries(parts.map((p) => [p.type, p.value]))
   return `${lookup.year}-${lookup.month}-${lookup.day}`
 }
+
+// KST 기준 오늘 날짜에서 n개월을 뺀 "yyyy-MM-dd" 반환.
+// Date.setMonth 의 표준 동작(예: 3월 31일 - 1개월 = 3월 3일)을 그대로 따른다.
+// 1인용 차트 기간 필터에는 정확한 day-overflow 보정이 불필요.
+export function monthsAgoKst(n: number): string {
+  const d = new Date()
+  d.setMonth(d.getMonth() - n)
+  return formatKstDate(d)
+}
+
+export function yearsAgoKst(n: number): string {
+  const d = new Date()
+  d.setFullYear(d.getFullYear() - n)
+  return formatKstDate(d)
+}

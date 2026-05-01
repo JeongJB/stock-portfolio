@@ -2,15 +2,19 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listSnapshots } from '../api/client'
 import type { SnapshotView } from '../api/types'
+import { PeriodSelector } from '../components/snapshots/PeriodSelector'
 import { SnapshotTrendChart } from '../components/snapshots/SnapshotTrendChart'
 import { TakeSnapshotButton } from '../components/snapshots/TakeSnapshotButton'
+import { useSnapshotPeriod } from '../components/snapshots/useSnapshotPeriod'
 
 const EMPTY_SNAPSHOTS: SnapshotView[] = []
 
 export function Snapshots() {
+  const { state, setPreset, setCustomFrom, setCustomTo, range } = useSnapshotPeriod()
+
   const query = useQuery({
-    queryKey: ['snapshots'],
-    queryFn: () => listSnapshots(),
+    queryKey: ['snapshots', range.from, range.to],
+    queryFn: () => listSnapshots(range.from, range.to),
   })
 
   // 박제 버튼이 응답 date 와 비교해 토스트 분기에 사용한다. fallback 빈 배열은
@@ -34,6 +38,13 @@ export function Snapshots() {
         </div>
         <TakeSnapshotButton existingDates={existingDates} />
       </div>
+
+      <PeriodSelector
+        state={state}
+        onPresetChange={setPreset}
+        onCustomFromChange={setCustomFrom}
+        onCustomToChange={setCustomTo}
+      />
 
       {query.isPending && <SnapshotsSkeleton />}
 
@@ -70,10 +81,15 @@ function SnapshotsSkeleton() {
   )
 }
 
+// 전체 0건과 기간 내 0건을 GET /api/snapshots?from&to 응답만으로는 구분할 수 없어
+// 단일 메시지 + 기간 변경 안내로 단순화한다.
 function SnapshotsEmptyState() {
   return (
     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
-      아직 박제된 스냅샷이 없습니다. 위의 &lsquo;지금 박제&rsquo; 버튼을 눌러 첫 스냅샷을 만들어 보세요.
+      <p>선택한 기간에 박제된 스냅샷이 없습니다.</p>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        위의 &lsquo;지금 박제&rsquo; 버튼으로 첫 스냅샷을 만들거나, 기간을 변경해 보세요.
+      </p>
     </div>
   )
 }
