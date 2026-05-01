@@ -60,7 +60,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 단위 | 산출물 |
 | --- | --- |
 | FE-0 공통 인프라 | `api/types.ts`(BigDecimal=string, nullable 명시), `api/client.ts`(`VITE_API_BASE_URL` / `VITE_API_KEY`), USD/KRW 컨텍스트(localStorage 영속·기본 KRW), KST 시각·천 단위 포맷 헬퍼, 자체 토스트 시스템, vite dev proxy(`/api` → `:8080`). |
-| FE-1 대시보드 (`/`) | 평가액·원금·평가손익 합계 카드 3장 / 보유 비중 파이 차트(현금 슬라이스 포함) / 포지션 표(시세 실패 행 회색 음영 + `—`). |
+| FE-1 대시보드 (`/`) | 평가액·원금·평가손익 합계 카드 3장 / 보유 비중 파이 차트(현금 슬라이스 포함) / 포지션 표(시세 실패 행 회색 음영 + `—`) / 우상단 "이미지로 저장" 버튼 (html-to-image PNG, 파일명 `portfolio-<KST date>.png`). |
 | FE-2 거래 입력 (`/trades`) | BUY/SELL/DIVIDEND/DEPOSIT/WITHDRAW 5종 탭, 같은 페이지 머무름 + 토스트, 4xx/5xx 응답 본문 그대로 노출, `executedAt` 토글로 과거 시각 입력. (DIVIDEND 는 P1-5 에서 추가) |
 | FE-3 스냅샷 추이 (`/snapshots`) | 평가액·원금 두 라인 차트(USD/KRW 즉시 토글), 호버에 `usdKrwRate` 표시, 박제 시 갱신/저장 분기 토스트, 0건 빈 상태 안내. |
 
@@ -76,9 +76,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 다음 단계 (재개 시 이 순서)
 
 1. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
-   - FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.
-   - 백업/내보내기.
 2. **P2 후속**:
    - FE-6 거래 내역 표(GSI1 도입 후).
    - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.

@@ -1,14 +1,36 @@
+import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPortfolio } from '../api/client'
 import { SummaryCards } from '../components/dashboard/SummaryCards'
 import { AllocationPie } from '../components/dashboard/AllocationPie'
 import { PositionsTable } from '../components/dashboard/PositionsTable'
+import { exportElementAsPng } from '../app/exportImage'
+import { formatKstDate } from '../app/format'
+import { useToast } from '../app/toastContext'
 
 export function Dashboard() {
   const query = useQuery({
     queryKey: ['portfolio'],
     queryFn: getPortfolio,
   })
+
+  const captureRef = useRef<HTMLDivElement>(null)
+  const [exporting, setExporting] = useState(false)
+  const { showToast } = useToast()
+
+  const handleExport = async () => {
+    if (!captureRef.current || exporting) return
+    setExporting(true)
+    try {
+      const filename = `portfolio-${formatKstDate()}.png`
+      await exportElementAsPng(captureRef.current, filename)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      showToast(`이미지 저장 실패: ${message}`, 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   if (query.isPending) {
     return <DashboardSkeleton />
@@ -34,11 +56,37 @@ export function Dashboard() {
   const data = query.data
 
   return (
-    <div className="space-y-4">
+    <div ref={captureRef} className="space-y-4">
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={handleExport}
+          disabled={exporting}
+          className="inline-flex items-center gap-1.5 rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          <DownloadIcon />
+          {exporting ? '저장 중...' : '이미지로 저장'}
+        </button>
+      </div>
       <SummaryCards data={data} />
       <AllocationPie data={data} />
       <PositionsTable positions={data.positions} />
     </div>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 20 20"
+      fill="currentColor"
+      className="h-3.5 w-3.5"
+      aria-hidden="true"
+    >
+      <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v8.69L6.03 8.22a.75.75 0 0 0-1.06 1.06l4.5 4.5a.75.75 0 0 0 1.06 0l4.5-4.5a.75.75 0 1 0-1.06-1.06l-3.22 3.22V2.75Z" />
+      <path d="M3.5 13.75a.75.75 0 0 0-1.5 0v2.5A2.75 2.75 0 0 0 4.75 19h10.5A2.75 2.75 0 0 0 18 16.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5Z" />
+    </svg>
   )
 }
 
