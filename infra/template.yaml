@@ -475,6 +475,13 @@ Resources:
         ViewerCertificate:
           # 커스텀 도메인 미사용 — *.cloudfront.net 기본 인증서.
           CloudFrontDefaultCertificate: true
+        # 한국에서만 사용 — 그 외 국가 IP 는 CloudFront 단계에서 403.
+        # 해외 출장 등 일시 허용이 필요하면 Locations 에 국가 추가 후 redeploy.
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: whitelist
+            Locations:
+              - KR
 
 Outputs:
   TableName:

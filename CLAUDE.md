@@ -80,6 +80,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | --- | --- |
 | FE-6 거래 내역 표 + memo | `/history` 신규 페이지 + 헤더 메뉴 "거래 내역". `GET /api/trades?limit=200` (최신순, default=200/MAX=1000). 컬럼 7종(시각·종류·종목·수량·단가·금액·비고). 거래 종류별 색상 배지(BUY emerald / SELL rose / DEPOSIT sky / WITHDRAW slate / DIVIDEND violet). 입금·출금 거래에 비고(memo) 입력·표시 추가 — `Trade` 도메인에 `memo: String?` 필드 신설(최대 200자, blank→null 정규화), FE 입력은 DEPOSIT/WITHDRAW 폼에만 노출. 거래 시점 환율 미박제 → 표는 USD 기준만 표시. 편집/삭제·필터·페이지네이션은 미도입. |
 | FE-7 + FE-8 거래 폼 보유 종목 선택 | TradeForm 의 SELL/DIVIDEND 탭은 strict dropdown(보유 종목만), BUY 탭은 radio 토글(신규 매수=자유 입력 / 추가 매수=dropdown). 선택 시 평균단가·수량 힌트. 0개 보유 시 안내 메시지. 데이터는 `GET /api/portfolio` 의 positions[] (react-query 캐시 공유 — 추가 fetch X). 백엔드 변경 없음. |
+| infra: KR-only GeoRestriction | CloudFront `DistributionConfig.Restrictions.GeoRestriction = whitelist [KR]`. 한국 외 IP 는 CloudFront 단계에서 403. API Gateway 는 별도 차단 안 함 (API Key + 정상 호출 흐름이 프론트 경유라 우회 가치 낮음, WAF $5/월 회피). 해외 출장 시 일시 허용은 template Locations 추가 + redeploy. |
 
 ### 다음 단계 (재개 시 이 순서)
 
@@ -89,7 +90,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    - recharts 청크 분할 등 성능 미세 조정.
    - SnapStart 적용 검토 — 현재 콜드 스타트 5~10초 수용 중. 1인용 빈도엔 체감 거슬리지 않음 → 우선순위 낮음.
    - X-Ray / 추가 알람(요청량·throttle 메트릭) — 1인용엔 과함. 정말 필요해질 때만.
-   - 한국에서만 접속할 계획이므로 다른 국가에서의 접근 차단.
 
 ### 운영 1회 작업 (FE-5e 적용 시 사용자가 처리할 것)
 
