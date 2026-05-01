@@ -6,16 +6,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
     <title>Stock Portfolio</title>
-    <script>
-      // beforeinstallprompt 는 React 컴포넌트가 마운트되기 전에 발사될 수 있어
-      // 여기서 미리 잡아 window 에 박제. 이후 useInstallPrompt 가 마운트 시 회수.
-      window.__deferredInstallPrompt = null;
-      window.addEventListener('beforeinstallprompt', function (e) {
-        e.preventDefault();
-        window.__deferredInstallPrompt = e;
-        window.dispatchEvent(new Event('installpromptcaptured'));
-      });
-    </script>
   </head>
   <body>
     <div id="root"></div>
