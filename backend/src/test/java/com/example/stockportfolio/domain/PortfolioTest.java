@@ -228,10 +228,10 @@ class PortfolioTest {
     @DisplayName("DIVIDEND ticker 누락은 도메인 예외")
     void dividend_missingTicker_throws() {
         Portfolio portfolio = new Portfolio();
-        Trade noTicker = new Trade("id-x", TradeType.DIVIDEND, T0, null, null, null, null, usd("1"));
+        Trade noTicker = new Trade("id-x", TradeType.DIVIDEND, T0, null, null, null, null, usd("1"), null);
         assertThrows(DomainException.class, () -> portfolio.apply(noTicker));
 
-        Trade blankTicker = new Trade("id-y", TradeType.DIVIDEND, T0, "  ", null, null, null, usd("1"));
+        Trade blankTicker = new Trade("id-y", TradeType.DIVIDEND, T0, "  ", null, null, null, usd("1"), null);
         DomainException ex = assertThrows(DomainException.class, () -> portfolio.apply(blankTicker));
         assertTrue(ex.getMessage().contains("ticker"));
     }

@@ -452,6 +452,50 @@ class DynamoPortfolioRepositoryIT {
     }
 
     @Test
+    void memo가_있는_거래는_round_trip_으로_보존된다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("1000", Currency.USD), "초기 입금");
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        Trade withdraw = Trade.withdraw(Instant.parse("2026-01-02T00:00:00Z"),
+                Money.of("200", Currency.USD), "월세");
+        portfolio.apply(withdraw);
+        repository.recordTrade(withdraw, portfolio);
+
+        List<Trade> recent = repository.listRecentTrades(10);
+        assertThat(recent).hasSize(2);
+        // 최신순: withdraw 먼저
+        assertThat(recent.get(0).type()).isEqualTo(TradeType.WITHDRAW);
+        assertThat(recent.get(0).memo()).isEqualTo("월세");
+        assertThat(recent.get(1).type()).isEqualTo(TradeType.DEPOSIT);
+        assertThat(recent.get(1).memo()).isEqualTo("초기 입금");
+    }
+
+    @Test
+    void memo가_없는_거래는_attribute_부재로_저장되고_역직렬화_시_null이다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("1000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        // 저장된 raw item 에 memo attribute 자체가 없음을 검증.
+        GetItemResponse stored = client.getItem(GetItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "pk", AttributeValue.fromS("USER#me"),
+                        "sk", AttributeValue.fromS(
+                                "TRADE#2026-01-01T00:00:00Z#" + deposit.id())))
+                .build());
+        assertThat(stored.item()).doesNotContainKey("memo");
+
+        Trade roundTripped = repository.listRecentTrades(1).get(0);
+        assertThat(roundTripped.memo()).isNull();
+    }
+
+    @Test
     void listRecentTrades는_최신순으로_limit개를_반환한다() {
         Portfolio portfolio = new Portfolio();
         Trade t1 = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),

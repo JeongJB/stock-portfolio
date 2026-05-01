@@ -243,9 +243,59 @@ class PortfolioControllerIT {
 
     @Test
     void GET_trades_limit_초과는_400을_반환한다() throws Exception {
-        mockMvc.perform(get("/api/trades").param("limit", "201"))
+        mockMvc.perform(get("/api/trades").param("limit", "1001"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("bad_request"));
+    }
+
+    @Test
+    void POST_DEPOSIT_memo는_저장_후_GET_trades_에서_그대로_반환된다() throws Exception {
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"500","memo":"초기 시드머니"}
+                                """))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/trades").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].type").value("DEPOSIT"))
+                .andExpect(jsonPath("$[0].memo").value("초기 시드머니"));
+    }
+
+    @Test
+    void POST_WITHDRAW_memo_blank는_저장_시_attribute_부재로_GET에서_누락된다() throws Exception {
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"500"}
+                                """))
+                .andExpect(status().isCreated());
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"WITHDRAW","cashAmount":"100","memo":"   "}
+                                """))
+                .andExpect(status().isCreated());
+
+        // memo 가 blank 였다면 정규화로 null → JsonInclude.NON_NULL 로 응답에서 제외.
+        mockMvc.perform(get("/api/trades").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("WITHDRAW"))
+                .andExpect(jsonPath("$[0].memo").doesNotExist());
+    }
+
+    @Test
+    void POST_memo_200자_초과는_400을_반환한다() throws Exception {
+        String over = "a".repeat(201);
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"100","memo":"%s"}
+                                """.formatted(over)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("validation_failed"));
     }
 
     @Test

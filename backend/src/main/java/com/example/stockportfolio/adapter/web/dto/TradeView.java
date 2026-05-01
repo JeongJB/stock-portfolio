@@ -21,7 +21,8 @@ public record TradeView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal qty,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal price,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal fee,
-        @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashAmount
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal cashAmount,
+        String memo
 ) {
 
     public static TradeView from(Trade trade) {
@@ -33,6 +34,7 @@ public record TradeView(
                 trade.qty() != null ? trade.qty().value() : null,
                 trade.price() != null ? trade.price().amount() : null,
                 trade.fee() != null ? trade.fee().amount() : null,
-                trade.cashAmount() != null ? trade.cashAmount().amount() : null);
+                trade.cashAmount() != null ? trade.cashAmount().amount() : null,
+                trade.memo());
     }
 }

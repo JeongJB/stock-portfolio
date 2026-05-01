@@ -20,7 +20,8 @@ public record RecordTradeCommand(
         BigDecimal qty,
         BigDecimal price,
         BigDecimal fee,
-        BigDecimal cashAmount
+        BigDecimal cashAmount,
+        String memo
 ) {
 
     public Trade toTrade() {
@@ -31,25 +32,25 @@ public record RecordTradeCommand(
         return switch (type) {
             case DEPOSIT -> new Trade(id, TradeType.DEPOSIT, when,
                     null, null, null, null,
-                    cashMoney(cashAmount));
+                    cashMoney(cashAmount), memo);
             case WITHDRAW -> new Trade(id, TradeType.WITHDRAW, when,
                     null, null, null, null,
-                    cashMoney(cashAmount));
+                    cashMoney(cashAmount), memo);
             case BUY -> new Trade(id, TradeType.BUY, when,
                     ticker,
                     qty != null ? Quantity.of(qty) : null,
                     price != null ? Money.of(price, Currency.USD) : null,
                     fee != null ? Money.of(fee, Currency.USD) : Money.zero(Currency.USD),
-                    null);
+                    null, memo);
             case SELL -> new Trade(id, TradeType.SELL, when,
                     ticker,
                     qty != null ? Quantity.of(qty) : null,
                     price != null ? Money.of(price, Currency.USD) : null,
                     fee != null ? Money.of(fee, Currency.USD) : Money.zero(Currency.USD),
-                    null);
+                    null, memo);
             case DIVIDEND -> new Trade(id, TradeType.DIVIDEND, when,
                     ticker, null, null, null,
-                    cashMoney(cashAmount));
+                    cashMoney(cashAmount), memo);
         };
     }
 

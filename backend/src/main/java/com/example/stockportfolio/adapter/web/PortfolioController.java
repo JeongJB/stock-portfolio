@@ -28,8 +28,8 @@ import java.util.List;
 @RequestMapping("/api")
 public class PortfolioController {
 
-    private static final int DEFAULT_LIMIT = 50;
-    private static final int MAX_LIMIT = 200;
+    private static final int DEFAULT_LIMIT = 200;
+    private static final int MAX_LIMIT = 1000;
     private static final int MIN_LIMIT = 1;
 
     private final PortfolioApplicationService service;

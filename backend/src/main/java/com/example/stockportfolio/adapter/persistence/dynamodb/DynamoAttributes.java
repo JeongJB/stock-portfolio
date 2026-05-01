@@ -96,6 +96,8 @@ final class DynamoAttributes {
             item.put("cashAmount", n(c.amount()));
             item.put("cashCcy", s(c.currency().name()));
         });
+        // memo 는 null/blank 면 attribute 자체 부재 (Trade 생성 시 blank → null 정규화 완료).
+        trade.memoOpt().ifPresent(m -> item.put("memo", s(m)));
         // BUY/SELL/DIVIDEND 만 종목별 거래 조회용 GSI1 키 박제. DEPOSIT/WITHDRAW 는 키 부재 → 인덱스 자동 제외.
         if (isTickerLinked(trade.type()) && trade.ticker() != null) {
             item.put(GSI1_PK, s(tickerPk(trade.ticker())));
@@ -117,7 +119,8 @@ final class DynamoAttributes {
         Money price = readMoney(item, "price", "priceCcy");
         Money fee = readMoney(item, "fee", "feeCcy");
         Money cashAmount = readMoney(item, "cashAmount", "cashCcy");
-        return new Trade(id, type, executedAt, ticker, qty, price, fee, cashAmount);
+        String memo = item.containsKey("memo") ? item.get("memo").s() : null;
+        return new Trade(id, type, executedAt, ticker, qty, price, fee, cashAmount, memo);
     }
 
     static Map<String, AttributeValue> positionItem(Position position) {
