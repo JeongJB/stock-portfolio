@@ -74,7 +74,8 @@ class KisMarketDataAdapterTest {
                 return clockHolder.get().instant();
             }
         };
-        KisAccessTokenManager tokenManager = new KisAccessTokenManager(restClient, baseUrl, credentialsProvider, proxyClock);
+        KisAccessTokenManager tokenManager = new KisAccessTokenManager(
+                restClient, baseUrl, credentialsProvider, proxyClock, new InMemoryKisAccessTokenStore());
         KisHttpClient kisHttpClient = new KisHttpClient(restClient, baseUrl, tokenManager, credentialsProvider);
         return new KisMarketDataAdapter(
                 kisHttpClient,

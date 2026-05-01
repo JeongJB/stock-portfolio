@@ -53,8 +53,9 @@ public class KisMarketDataConfig {
             RestClient kisRestClient,
             @Value("${kis.base-url:https://openapi.koreainvestment.com:9443}") String baseUrl,
             KisCredentialsProvider credentialsProvider,
-            Clock kisClock) {
-        return new KisAccessTokenManager(kisRestClient, baseUrl, credentialsProvider, kisClock);
+            Clock kisClock,
+            KisAccessTokenStore kisAccessTokenStore) {
+        return new KisAccessTokenManager(kisRestClient, baseUrl, credentialsProvider, kisClock, kisAccessTokenStore);
     }
 
     @Bean

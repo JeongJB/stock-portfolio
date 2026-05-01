@@ -1,8 +1,10 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.marketdata.kis.KisAccessTokenStore;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.TickerMetaRepository;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -15,6 +17,7 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClientBuilder;
 
 import java.net.URI;
+import java.time.Clock;
 
 @Configuration
 public class DynamoDbConfig {
@@ -50,5 +53,13 @@ public class DynamoDbConfig {
             DynamoDbClient client,
             @Value("${portfolio.table-name:Portfolio}") String tableName) {
         return new DynamoTickerMetaRepository(client, tableName);
+    }
+
+    @Bean
+    public KisAccessTokenStore kisAccessTokenStore(
+            DynamoDbClient client,
+            @Value("${portfolio.table-name:Portfolio}") String tableName,
+            @Qualifier("kisClock") Clock clock) {
+        return new DynamoKisAccessTokenStore(client, tableName, clock);
     }
 }

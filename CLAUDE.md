@@ -55,6 +55,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | P1-4 한투 주간장 EXCD 자동 매핑 | KST 10:00~17:30 사이 시세 조회 시 NYS/NAS/AMS 를 BAY/BAQ/BAA 로 자동 변환. 주간장 응답이 비면 정규장 코드로 1회 fallback. 도메인 `Exchange` enum 과 META 에 박힌 거래소는 정규장 코드 그대로 유지 — 매핑은 어댑터 내부에만. |
 | P1-5 DIVIDEND 거래 종류 추가 | TradeType 에 DIVIDEND 추가 (ticker + amount). 응답 시점 환율 일관 적용. 종목별 평가손익에 누적배당 합산. DIVIDEND 거래 PUT 시 GSI1 키도 박제 (BUY/SELL 과 일관). FE TradeForm 4탭 → 5탭. 종목별 누적배당 분리 표시는 P2(FE-6) 로 미룸. |
 | P1-6 IRR + 단순 수익률 | `IrrCalculator` 도메인(XIRR Newton-Raphson + bisection fallback). DEPOSIT/WITHDRAW/DIVIDEND 만 외부 현금흐름으로 사용 (BUY/SELL 제외), 마지막 시점 +현재 총평가액 USD. `GET /api/portfolio` 응답에 `irr`, `simpleReturn` 두 필드(nullable) 추가. 대시보드 합계 카드 3→5장 (연환산 수익률·단순 수익률 추가). KRW 환산 안 함 — USD 기준. |
+| P1-7 KIS 토큰 DynamoDB 박제 | `KisAccessTokenStore` 포트(`adapter/marketdata/kis/`) + `DynamoKisAccessTokenStore` 어댑터 신설. KIS access token 을 단일 테이블 `META#kis / ACCESS_TOKEN` 항목에 박제(`accessToken`, `expiresAt` ISO Instant, `ttl` epoch second). `KisAccessTokenManager` 가 in-memory → DDB → KIS 3-layer 캐시(refresh margin 60s, race 처리는 단일 인스턴스 가정으로 무시). DDB find/save 예외는 best-effort WARN 후 KIS 폴스루/정상 반환. Lambda 콜드 스타트 시 KIS `/oauth2/tokenP` 호출 안 해도 됨 — 24h 토큰 재사용. SAM template 변경 없음(같은 테이블·기존 IAM 권한). |
 
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 

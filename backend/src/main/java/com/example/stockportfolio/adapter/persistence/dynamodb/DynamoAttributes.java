@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.marketdata.kis.KisAccessTokenStore;
 import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
@@ -51,6 +52,8 @@ final class DynamoAttributes {
     static final String TICKER_PK_PREFIX = "TICKER#";
     static final String QUOTE_SK_PREFIX = "QUOTE#";
     static final String TICKER_META_SK = "META";
+    static final String KIS_ACCESS_TOKEN_PK = "META#kis";
+    static final String KIS_ACCESS_TOKEN_SK = "ACCESS_TOKEN";
     static final String TTL_ATTR = "ttl";
 
     static final ZoneId KST = ZoneId.of("Asia/Seoul");
@@ -349,5 +352,22 @@ final class DynamoAttributes {
         Instant lastVerifiedAt = Instant.parse(item.get("lastVerifiedAt").s());
         int failures = Integer.parseInt(item.get("consecutiveQuoteFailures").n());
         return new TickerMeta(ticker, exchange, lastVerifiedAt, failures);
+    }
+
+    static Map<String, AttributeValue> kisAccessTokenItem(KisAccessTokenStore.StoredToken token) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(PK, s(KIS_ACCESS_TOKEN_PK));
+        item.put(SK, s(KIS_ACCESS_TOKEN_SK));
+        item.put("accessToken", s(token.accessToken()));
+        item.put("expiresAt", s(token.expiresAt().toString()));
+        // ttl 은 expiresAt 그대로 — 만료 직후 DDB TTL 청소가 동작.
+        item.put(TTL_ATTR, AttributeValue.fromN(Long.toString(token.expiresAt().getEpochSecond())));
+        return item;
+    }
+
+    static KisAccessTokenStore.StoredToken kisAccessTokenFromItem(Map<String, AttributeValue> item) {
+        String accessToken = item.get("accessToken").s();
+        Instant expiresAt = Instant.parse(item.get("expiresAt").s());
+        return new KisAccessTokenStore.StoredToken(accessToken, expiresAt);
     }
 }
