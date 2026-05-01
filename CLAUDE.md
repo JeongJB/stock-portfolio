@@ -54,6 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | P1-3 application.yml 전환 | application.properties → yml 변환, properties 삭제. 환경별 분기 쉬워짐. |
 | P1-4 한투 주간장 EXCD 자동 매핑 | KST 10:00~17:30 사이 시세 조회 시 NYS/NAS/AMS 를 BAY/BAQ/BAA 로 자동 변환. 주간장 응답이 비면 정규장 코드로 1회 fallback. 도메인 `Exchange` enum 과 META 에 박힌 거래소는 정규장 코드 그대로 유지 — 매핑은 어댑터 내부에만. |
 | P1-5 DIVIDEND 거래 종류 추가 | TradeType 에 DIVIDEND 추가 (ticker + amount). 응답 시점 환율 일관 적용. 종목별 평가손익에 누적배당 합산. DIVIDEND 거래 PUT 시 GSI1 키도 박제 (BUY/SELL 과 일관). FE TradeForm 4탭 → 5탭. 종목별 누적배당 분리 표시는 P2(FE-6) 로 미룸. |
+| P1-6 IRR + 단순 수익률 | `IrrCalculator` 도메인(XIRR Newton-Raphson + bisection fallback). DEPOSIT/WITHDRAW/DIVIDEND 만 외부 현금흐름으로 사용 (BUY/SELL 제외), 마지막 시점 +현재 총평가액 USD. `GET /api/portfolio` 응답에 `irr`, `simpleReturn` 두 필드(nullable) 추가. 대시보드 합계 카드 3→5장 (연환산 수익률·단순 수익률 추가). KRW 환산 안 함 — USD 기준. |
 
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 
@@ -75,8 +76,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 다음 단계 (재개 시 이 순서)
 
-1. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
-   - IRR(내부수익률) 계산.
+1. **백엔드 P1 발주** *(현재 발주 후보 없음 — 새 요구사항 발생 시 `planner` 재검토)*.
 2. **P2 후속**:
    - FE-6 거래 내역 표(GSI1 도입 후).
    - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.

@@ -5,6 +5,7 @@ import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.adapter.web.dto.TradeView;
 import com.example.stockportfolio.domain.Exchange;
+import com.example.stockportfolio.domain.IrrCalculator;
 import com.example.stockportfolio.domain.MarketDataPort;
 import com.example.stockportfolio.domain.Money;
 import com.example.stockportfolio.domain.Portfolio;
@@ -29,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 public class PortfolioApplicationService {
@@ -165,6 +167,14 @@ public class PortfolioApplicationService {
 
         BigDecimal cashWeight = computeWeight(cashUsd, denominator);
 
+        // 4단계: 수익률 지표 계산.
+        // - 단순 누적: (현재 총자산 USD - 순 원금) / 순 원금. 순 원금 ≤ 0 이면 null.
+        // - IRR: DEPOSIT/WITHDRAW/DIVIDEND 만 외부 현금흐름으로 잡고, 마지막 시점에 +현재 총자산 USD.
+        BigDecimal currentTotalUsd = totalMarketValueUsd.add(cashUsd);
+        BigDecimal netPrincipalUsd = portfolio.principal().amount();
+        BigDecimal simpleReturn = IrrCalculator.simpleReturn(currentTotalUsd, netPrincipalUsd).orElse(null);
+        BigDecimal irr = computeIrr(currentTotalUsd, asOf).orElse(null);
+
         return new PortfolioView(
                 cashUsd,
                 toKrw(cashUsd, usdKrwRate),
@@ -181,7 +191,41 @@ public class PortfolioApplicationService {
                 toKrw(totalUnrealizedPnlUsd, usdKrwRate),
                 usdKrwRate,
                 asOf,
-                positionViews);
+                positionViews,
+                irr,
+                simpleReturn);
+    }
+
+    /**
+     * IRR 입력 현금흐름 시퀀스 생성 후 XIRR 호출.
+     * - DEPOSIT: 음수(외부 → 포트폴리오 투입)
+     * - WITHDRAW: 양수(포트폴리오 → 외부 회수)
+     * - DIVIDEND: 양수(현금 입금)
+     * - BUY/SELL 은 포트폴리오 내부 자산 형태 변경이므로 제외
+     * - 마지막 시점(asOf)에 현재 총자산 USD 를 양수로 추가 ("지금 다 회수하면" 가치)
+     */
+    private Optional<BigDecimal> computeIrr(BigDecimal currentTotalUsd, OffsetDateTime asOf) {
+        List<IrrCalculator.CashFlow> flows = new ArrayList<>();
+        for (Trade t : repository.listTradesByType(TradeType.DEPOSIT)) {
+            Money amount = t.cashAmount();
+            if (amount == null) continue;
+            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount().negate()));
+        }
+        for (Trade t : repository.listTradesByType(TradeType.WITHDRAW)) {
+            Money amount = t.cashAmount();
+            if (amount == null) continue;
+            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount()));
+        }
+        for (Trade t : repository.listTradesByType(TradeType.DIVIDEND)) {
+            Money amount = t.cashAmount();
+            if (amount == null) continue;
+            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount()));
+        }
+        if (flows.isEmpty()) {
+            return Optional.empty();
+        }
+        flows.add(new IrrCalculator.CashFlow(asOf.toInstant(), currentTotalUsd));
+        return IrrCalculator.xirr(flows);
     }
 
     public List<TradeView> recentTrades(int limit) {

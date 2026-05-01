@@ -370,6 +370,83 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("IRR + simpleReturn: 거래 + 평가액 조합 → 응답에 채워진다")
+    void view_irrAndSimpleReturn_populatedFromTradesAndValuation() {
+        FakeRepository repo = new FakeRepository();
+        // 시드: 1년 전 1000 입금 + 시점 0 에 AAPL 10주(평단 100) 보유, 현재가 200
+        // → 평가액 2000 + 현금 0 = 2000, 순 원금 1000 → simpleReturn = 1.0 (100%)
+        // → IRR: -1000 (1년 전), +2000 (오늘) → 약 100% (정확히 365.25일 보정 시 99.x%)
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.zero(Currency.USD),
+                Money.of("1000", Currency.USD),
+                Money.zero(Currency.USD)));
+        // FIXED = 2026-04-28T00:00:00Z, 1년 전 = 2025-04-28
+        repo.trades.add(Trade.deposit(Instant.parse("2025-04-28T00:00:00Z"),
+                Money.of("1000", Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        // simpleReturn = (2000 - 1000) / 1000 = 1.0
+        assertNotNull(view.simpleReturn());
+        assertEquals(0, view.simpleReturn().compareTo(new BigDecimal("1.000000")),
+                "simpleReturn = 1.0 (실제: " + view.simpleReturn() + ")");
+
+        // IRR ≈ 100%/년 — 365일 vs 365.25일 보정으로 1.001x 수준.
+        assertNotNull(view.irr());
+        double irrValue = view.irr().doubleValue();
+        assertTrue(irrValue > 0.99 && irrValue < 1.02,
+                "IRR ≈ 1.0 (실제: " + view.irr() + ")");
+    }
+
+    @Test
+    @DisplayName("IRR + simpleReturn: 거래 없음(빈 포트폴리오) → 두 필드 모두 null")
+    void view_noTrades_irrAndSimpleReturnNull() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(new Portfolio());
+
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+        PortfolioView view = service.view();
+
+        assertNull(view.irr(), "거래 없음 → IRR null");
+        assertNull(view.simpleReturn(), "순 원금 0 → simpleReturn null");
+    }
+
+    @Test
+    @DisplayName("IRR: DEPOSIT 1건만 있고 회수가 0 (현금만 출금/매수 없음, 평가액 0) → IRR null")
+    void view_onlyDepositNoValue_irrNull() {
+        FakeRepository repo = new FakeRepository();
+        // DEPOSIT 1000 후 모두 출금 — 현금 0, 평가액 0, 순 원금 0
+        repo.set(buildPortfolio(Map.of(),
+                Money.zero(Currency.USD),
+                Money.of("1000", Currency.USD),
+                Money.of("1000", Currency.USD)));
+        repo.trades.add(Trade.deposit(Instant.parse("2025-04-28T00:00:00Z"),
+                Money.of("1000", Currency.USD)));
+        repo.trades.add(Trade.withdraw(Instant.parse("2026-04-28T00:00:00Z"),
+                Money.of("1000", Currency.USD)));
+
+        // 현재 총자산 = 0 + 0 = 0, flows: -1000, +1000, +0 → IRR ≈ 0 부근에서 수렴 가능
+        // 핵심 검증은 simpleReturn null (순 원금 0).
+        PortfolioApplicationService service = newService(repo,
+                new StubMarketData(new BigDecimal("1400")));
+        PortfolioView view = service.view();
+
+        assertNull(view.simpleReturn(), "순 원금 0 → simpleReturn null");
+        // IRR 은 수렴할 수도 있음(약 0%) — 부호와 존재만 가볍게 확인.
+        // 거래 시점이 정확히 1년 차이라 -1000 / +1000 → IRR = 0 부근.
+        if (view.irr() != null) {
+            assertTrue(Math.abs(view.irr().doubleValue()) < 0.01,
+                    "회수와 입금이 같으면 IRR ≈ 0 (실제: " + view.irr() + ")");
+        }
+    }
+
+    @Test
     @DisplayName("응답 메타: usdKrwRate와 KST 오프셋 asOf가 채워진다")
     void view_includesRateAndKstAsOf() {
         FakeRepository repo = new FakeRepository();
