@@ -12,3 +12,10 @@ body {
   min-height: 100svh;
   overflow-x: hidden;
 }
+
+.recharts-wrapper:focus,
+.recharts-wrapper:focus-visible,
+.recharts-surface:focus,
+.recharts-surface:focus-visible {
+  outline: none;
+}
