@@ -2,18 +2,22 @@ import { useInstallPrompt } from '../app/useInstallPrompt'
 import { useToast } from '../app/toastContext'
 
 export function InstallButton() {
-  const { canInstall, promptInstall } = useInstallPrompt()
+  const { promptInstall } = useInstallPrompt()
   const { showToast } = useToast()
-
-  if (!canInstall) return null
 
   const handleClick = async () => {
     try {
       const outcome = await promptInstall()
       if (outcome === 'accepted') {
         showToast('앱이 설치되었습니다', 'success')
+        return
       }
-      // dismissed / unavailable 은 노이즈 방지 차원에서 토스트 생략.
+      if (outcome === 'unavailable') {
+        // beforeinstallprompt 가 발생 안 한 환경(모바일 Chrome 의 자체 검사 보수적 등).
+        // 사용자에게 브라우저 메뉴 사용을 안내.
+        showToast('브라우저 메뉴에서 "앱 설치" 또는 "홈 화면에 추가" 를 선택해 주세요')
+      }
+      // dismissed 는 노이즈 방지 차원에서 토스트 생략.
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       showToast(`설치 실패: ${message}`, 'error')
