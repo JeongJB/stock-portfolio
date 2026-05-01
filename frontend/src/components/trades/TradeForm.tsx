@@ -7,6 +7,7 @@ import { useToast } from '../../app/toastContext'
 const TRADE_TYPES: { type: TradeType; label: string }[] = [
   { type: 'BUY', label: '매수' },
   { type: 'SELL', label: '매도' },
+  { type: 'DIVIDEND', label: '배당' },
   { type: 'DEPOSIT', label: '입금' },
   { type: 'WITHDRAW', label: '출금' },
 ]
@@ -32,6 +33,10 @@ const DECIMAL_RE = /^\d*\.?\d*$/
 
 function isAssetTrade(type: TradeType): boolean {
   return type === 'BUY' || type === 'SELL'
+}
+
+function isDividend(type: TradeType): boolean {
+  return type === 'DIVIDEND'
 }
 
 export function TradeForm() {
@@ -103,6 +108,9 @@ export function TradeForm() {
       if (fields.qty) req.qty = fields.qty
       if (fields.price) req.price = fields.price
       if (fields.fee) req.fee = fields.fee
+    } else if (isDividend(type)) {
+      if (fields.ticker.trim()) req.ticker = fields.ticker.trim()
+      if (fields.cashAmount) req.cashAmount = fields.cashAmount
     } else {
       if (fields.cashAmount) req.cashAmount = fields.cashAmount
     }
@@ -148,6 +156,24 @@ export function TradeForm() {
               label="수수료 (USD, 선택)"
               value={fields.fee}
               onChange={(v) => handleFieldChange('fee', v)}
+              placeholder="0.00"
+              disabled={isPending}
+            />
+          </>
+        ) : isDividend(type) ? (
+          <>
+            <FieldText
+              label="티커"
+              value={fields.ticker}
+              onChange={(v) => handleFieldChange('ticker', v)}
+              placeholder="예: AAPL"
+              autoComplete="off"
+              disabled={isPending}
+            />
+            <FieldDecimal
+              label="배당금 (USD, 세후 입금액)"
+              value={fields.cashAmount}
+              onChange={(v) => handleFieldChange('cashAmount', v)}
               placeholder="0.00"
               disabled={isPending}
             />

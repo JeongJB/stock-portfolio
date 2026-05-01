@@ -3,7 +3,7 @@
 
 export type Currency = 'USD' | 'KRW'
 
-export type TradeType = 'DEPOSIT' | 'WITHDRAW' | 'BUY' | 'SELL'
+export type TradeType = 'DEPOSIT' | 'WITHDRAW' | 'BUY' | 'SELL' | 'DIVIDEND'
 
 export type Exchange = 'NAS' | 'NYS' | 'AMS'
 
