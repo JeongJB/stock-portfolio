@@ -47,6 +47,11 @@ export function listTrades(limit = 200): Promise<TradeView[]> {
   return request<TradeView[]>(`/api/trades?limit=${limit}`)
 }
 
+// 응답 본문(갱신된 PortfolioView) 은 useQuery invalidate 로 다시 불러올 거라 무시한다.
+export async function deleteTrade(id: string): Promise<void> {
+  await request<unknown>(`/api/trades/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export function listSnapshots(from?: string, to?: string): Promise<SnapshotListResponse> {
   const params = new URLSearchParams()
   if (from) params.set('from', from)

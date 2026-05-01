@@ -3,6 +3,9 @@ import { formatKstDateTime, formatMoney, formatQty } from '../../app/format'
 
 interface Props {
   trades: TradeView[]
+  onDelete: (trade: TradeView) => void
+  // 진행 중 거래 id (삭제 모달에서 확인 후 mutation 진행 중) — 해당 행의 휴지통 disable.
+  pendingDeleteId?: string | null
 }
 
 // 거래 종류별 한국어 라벨 + 배지 색상. USD/KRW 토글과 무관 — 거래 시점 환율을 박제하지 않으므로
@@ -30,7 +33,7 @@ const TYPE_META: Record<TradeType, { label: string; badgeClass: string }> = {
   },
 }
 
-export function TradeHistoryTable({ trades }: Props) {
+export function TradeHistoryTable({ trades, onDelete, pendingDeleteId }: Props) {
   if (trades.length === 0) {
     return (
       <section className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-300">
@@ -51,11 +54,17 @@ export function TradeHistoryTable({ trades }: Props) {
             <Th>단가 (USD)</Th>
             <Th>금액 (USD)</Th>
             <Th align="left">비고</Th>
+            <Th>삭제</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
           {trades.map((t) => (
-            <Row key={t.tradeId} trade={t} />
+            <Row
+              key={t.tradeId}
+              trade={t}
+              onDelete={onDelete}
+              isPending={pendingDeleteId === t.tradeId}
+            />
           ))}
         </tbody>
       </table>
@@ -63,7 +72,15 @@ export function TradeHistoryTable({ trades }: Props) {
   )
 }
 
-function Row({ trade }: { trade: TradeView }) {
+function Row({
+  trade,
+  onDelete,
+  isPending,
+}: {
+  trade: TradeView
+  onDelete: (trade: TradeView) => void
+  isPending: boolean
+}) {
   const meta = TYPE_META[trade.type]
   // 금액 컬럼: BUY/SELL 은 qty * price, DEPOSIT/WITHDRAW/DIVIDEND 는 cashAmount.
   const amountUsd = computeAmountUsd(trade)
@@ -93,7 +110,42 @@ function Row({ trade }: { trade: TradeView }) {
       <Td align="left" wrap className="max-w-xs break-words text-slate-600 dark:text-slate-300">
         {showMemo ? (trade.memo ?? '—') : '—'}
       </Td>
+      <Td>
+        <button
+          type="button"
+          onClick={() => onDelete(trade)}
+          disabled={isPending}
+          aria-label="거래 삭제"
+          title="거래 삭제"
+          className="inline-flex min-h-[44px] w-11 items-center justify-center rounded-md text-slate-500 hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-400 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+        >
+          <TrashIcon />
+        </button>
+      </Td>
     </tr>
+  )
+}
+
+// 단순 인라인 SVG — 별도 아이콘 라이브러리 의존 회피.
+function TrashIcon() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
   )
 }
 

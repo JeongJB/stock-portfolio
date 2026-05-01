@@ -1,13 +1,37 @@
-import { useQuery } from '@tanstack/react-query'
-import { listTrades } from '../api/client'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { deleteTrade, listTrades } from '../api/client'
+import type { TradeView } from '../api/types'
+import { useToast } from '../app/toastContext'
+import { DeleteTradeModal } from '../components/history/DeleteTradeModal'
 import { TradeHistoryTable } from '../components/history/TradeHistoryTable'
 
 const HISTORY_LIMIT = 200
 
 export function History() {
+  const queryClient = useQueryClient()
+  const { showToast } = useToast()
+  const [target, setTarget] = useState<TradeView | null>(null)
+
   const query = useQuery({
     queryKey: ['trades', HISTORY_LIMIT],
     queryFn: () => listTrades(HISTORY_LIMIT),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: deleteTrade,
+    onSuccess: () => {
+      // 거래 / 포트폴리오 / 스냅샷 모두 영향 받음 — 일괄 invalidate.
+      void queryClient.invalidateQueries({ queryKey: ['trades'] })
+      void queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+      void queryClient.invalidateQueries({ queryKey: ['snapshots'] })
+      showToast('거래가 삭제되었습니다', 'success')
+      setTarget(null)
+    },
+    onError: (e: Error) => {
+      // 422/404 메시지가 그대로 흘러와 사용자가 무엇이 잘못됐는지 식별 가능.
+      showToast(`삭제 실패: ${e.message}`, 'error')
+    },
   })
 
   return (
@@ -37,7 +61,24 @@ export function History() {
         </div>
       )}
 
-      {query.isSuccess && <TradeHistoryTable trades={query.data} />}
+      {query.isSuccess && (
+        <TradeHistoryTable
+          trades={query.data}
+          onDelete={(trade) => setTarget(trade)}
+          pendingDeleteId={deleteMutation.isPending ? target?.tradeId ?? null : null}
+        />
+      )}
+
+      {target && (
+        <DeleteTradeModal
+          trade={target}
+          isPending={deleteMutation.isPending}
+          onCancel={() => {
+            if (!deleteMutation.isPending) setTarget(null)
+          }}
+          onConfirm={() => deleteMutation.mutate(target.tradeId)}
+        />
+      )}
     </section>
   )
 }
