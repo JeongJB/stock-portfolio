@@ -4,6 +4,7 @@ import type {
   RecordTradeResponse,
   SnapshotListResponse,
   SnapshotView,
+  TradeView,
 } from './types'
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') as string
@@ -40,6 +41,10 @@ export function recordTrade(req: RecordTradeRequest): Promise<RecordTradeRespons
 
 export function takeSnapshot(): Promise<SnapshotView> {
   return request<SnapshotView>('/api/snapshots', { method: 'POST' })
+}
+
+export function listTrades(limit = 200): Promise<TradeView[]> {
+  return request<TradeView[]>(`/api/trades?limit=${limit}`)
 }
 
 export function listSnapshots(from?: string, to?: string): Promise<SnapshotListResponse> {

@@ -76,6 +76,8 @@ export interface TradeView {
   price?: string
   fee?: string
   cashAmount?: string
+  // memo 는 DEPOSIT/WITHDRAW 거래에서만 입력 받는다 (UI 1차안). 백엔드 모델은 모든 종류에서 허용.
+  memo?: string
 }
 
 export interface RecordTradeRequest {
@@ -86,6 +88,7 @@ export interface RecordTradeRequest {
   price?: string
   fee?: string
   cashAmount?: string
+  memo?: string
 }
 
 export interface RecordTradeResponse {

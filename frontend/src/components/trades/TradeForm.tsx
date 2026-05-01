@@ -18,6 +18,7 @@ interface FormFields {
   price: string
   fee: string
   cashAmount: string
+  memo: string
 }
 
 const EMPTY_FIELDS: FormFields = {
@@ -26,7 +27,10 @@ const EMPTY_FIELDS: FormFields = {
   price: '',
   fee: '',
   cashAmount: '',
+  memo: '',
 }
+
+const MEMO_MAX_LENGTH = 200
 
 // 양의 십진수만 허용. 빈 문자열은 OK(미입력 상태).
 const DECIMAL_RE = /^\d*\.?\d*$/
@@ -53,13 +57,14 @@ export function TradeForm() {
     mutationFn: recordTrade,
     onSuccess: () => {
       showToast('거래가 기록되었습니다', 'success')
-      // ticker는 보존하고 금액 필드만 비운다(연속 입력 편의).
+      // ticker는 보존하고 금액·memo 필드만 비운다(연속 입력 편의).
       setFields((prev) => ({
         ticker: prev.ticker,
         qty: '',
         price: '',
         fee: '',
         cashAmount: '',
+        memo: '',
       }))
       setErrorMessage(null)
       void queryClient.invalidateQueries({ queryKey: ['portfolio'] })
@@ -82,6 +87,12 @@ export function TradeForm() {
   const handleFieldChange = (key: keyof FormFields, raw: string) => {
     if (key === 'ticker') {
       setFields((prev) => ({ ...prev, ticker: raw.toUpperCase() }))
+      return
+    }
+    if (key === 'memo') {
+      // 200자 초과는 클라이언트에서 잘라낸다 — 서버 검증과 동일 한계.
+      const clipped = raw.length > MEMO_MAX_LENGTH ? raw.slice(0, MEMO_MAX_LENGTH) : raw
+      setFields((prev) => ({ ...prev, memo: clipped }))
       return
     }
     if (raw !== '' && !DECIMAL_RE.test(raw)) return
@@ -112,7 +123,10 @@ export function TradeForm() {
       if (fields.ticker.trim()) req.ticker = fields.ticker.trim()
       if (fields.cashAmount) req.cashAmount = fields.cashAmount
     } else {
+      // DEPOSIT / WITHDRAW
       if (fields.cashAmount) req.cashAmount = fields.cashAmount
+      const trimmedMemo = fields.memo.trim()
+      if (trimmedMemo) req.memo = trimmedMemo
     }
 
     mutation.mutate(req)
@@ -179,13 +193,21 @@ export function TradeForm() {
             />
           </>
         ) : (
-          <FieldDecimal
-            label="금액 (USD)"
-            value={fields.cashAmount}
-            onChange={(v) => handleFieldChange('cashAmount', v)}
-            placeholder="0.00"
-            disabled={isPending}
-          />
+          <>
+            <FieldDecimal
+              label="금액 (USD)"
+              value={fields.cashAmount}
+              onChange={(v) => handleFieldChange('cashAmount', v)}
+              placeholder="0.00"
+              disabled={isPending}
+            />
+            <FieldMemo
+              value={fields.memo}
+              onChange={(v) => handleFieldChange('memo', v)}
+              disabled={isPending}
+              maxLength={MEMO_MAX_LENGTH}
+            />
+          </>
         )}
       </div>
 
@@ -319,6 +341,38 @@ function FieldDecimal({
         placeholder={placeholder}
         disabled={disabled}
         className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono tabular-nums text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
+      />
+    </label>
+  )
+}
+
+function FieldMemo({
+  value,
+  onChange,
+  disabled,
+  maxLength,
+}: {
+  value: string
+  onChange: (v: string) => void
+  disabled?: boolean
+  maxLength: number
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+      <span className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+        <span>비고 (선택, 최대 {maxLength}자)</span>
+        <span className="text-xs text-slate-400 dark:text-slate-500">
+          {value.length}/{maxLength}
+        </span>
+      </span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        rows={2}
+        maxLength={maxLength}
+        placeholder="예: 월급 입금, 비상금 출금"
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
       />
     </label>
   )

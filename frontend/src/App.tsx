@@ -3,6 +3,7 @@ import { CurrencyToggle } from './components/CurrencyToggle'
 import { Dashboard } from './pages/Dashboard'
 import { Trades } from './pages/Trades'
 import { Snapshots } from './pages/Snapshots'
+import { History } from './pages/History'
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive
@@ -20,10 +21,13 @@ export default function App() {
               대시보드
             </NavLink>
             <NavLink to="/trades" className={navLinkClass}>
-              거래
+              거래 입력
             </NavLink>
             <NavLink to="/snapshots" className={navLinkClass}>
               스냅샷
+            </NavLink>
+            <NavLink to="/history" className={navLinkClass}>
+              거래 내역
             </NavLink>
           </nav>
         </div>
@@ -34,6 +38,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/trades" element={<Trades />} />
           <Route path="/snapshots" element={<Snapshots />} />
+          <Route path="/history" element={<History />} />
         </Routes>
       </main>
     </div>
