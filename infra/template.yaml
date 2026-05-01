@@ -175,9 +175,10 @@ Resources:
         Type: REGIONAL
       # SAM 이 OPTIONS preflight 메서드를 Mock integration 으로 자동 생성한다.
       # OPTIONS 는 ApiKeyRequired 자동 면제 (브라우저가 preflight 에 커스텀 헤더 안 붙임).
-      # AllowOrigin 은 1인용이라 '*' 로 단순화. 실제 응답 본문의 CORS 헤더는 Lambda 가 직접 부착.
+      # AllowOrigin 은 CloudFront 분포 도메인으로 한정 — 다른 출처 브라우저 호출 차단.
+      # 실제 응답 본문의 CORS 헤더(Lambda 직접 부착)도 같은 값을 사용하도록 환경변수로 주입.
       Cors:
-        AllowOrigin: "'*'"
+        AllowOrigin: !Sub "'https://${FrontendDistribution.DomainName}'"
         AllowHeaders: "'Content-Type,x-api-key'"
         AllowMethods: "'GET,POST,PUT,DELETE,PATCH,OPTIONS'"
       Auth:
@@ -210,6 +211,9 @@ Resources:
           PORTFOLIO_TABLE_NAME: !Ref TableName
           KIS_APPKEY_PARAMETER: !Ref KisAppKeyParameter
           KIS_APPSECRET_PARAMETER: !Ref KisAppSecretParameter
+          # API Gateway Cors.AllowOrigin 과 동일한 값을 Lambda 응답 헤더에도 부착해야
+          # 브라우저가 preflight + actual response 양쪽 모두에서 일치 검증을 통과한다.
+          CORS_ALLOWED_ORIGIN: !Sub "https://${FrontendDistribution.DomainName}"
       Events:
         # Method: ANY 로 묶으면 OPTIONS preflight 도 ANY 로 잡혀 ApiKeyRequired 가 적용된다.
         # 브라우저는 preflight 에 x-api-key 를 안 붙이므로 403. 메서드별 분리 + OPTIONS 만

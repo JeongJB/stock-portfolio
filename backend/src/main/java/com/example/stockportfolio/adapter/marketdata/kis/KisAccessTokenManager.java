@@ -100,7 +100,10 @@ public class KisAccessTokenManager {
                 .retrieve()
                 .body(JsonNode.class);
         if (response == null || !response.has("access_token")) {
-            throw new IllegalStateException("KIS 토큰 응답에 access_token 이 없습니다: " + response);
+            // 응답 본문 전체를 메시지에 박지 않는다 (잠재적 토큰/시크릿 누출 방지).
+            // 디버깅엔 키 목록만 충분.
+            Iterable<String> keys = response != null ? response.propertyNames() : java.util.List.of();
+            throw new IllegalStateException("KIS 토큰 응답에 access_token 이 없습니다 (응답 키: " + keys + ")");
         }
         String token = response.get("access_token").asString();
         long expiresIn = response.has("expires_in") ? response.get("expires_in").asLong(86400L) : 86400L;

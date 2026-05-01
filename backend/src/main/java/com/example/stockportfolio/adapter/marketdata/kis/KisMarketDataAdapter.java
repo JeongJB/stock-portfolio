@@ -85,7 +85,8 @@ public class KisMarketDataAdapter implements MarketDataPort {
         JsonNode output = output(root);
         BigDecimal price = readDecimal(output, PRICE_KEYS)
                 .orElseThrow(() -> new IllegalStateException(
-                        "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다: " + output));
+                        "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다 (output 키: "
+                                + output.propertyNames() + ")"));
         Instant asOf = clock.instant();
         return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
     }
@@ -155,7 +156,9 @@ public class KisMarketDataAdapter implements MarketDataPort {
                 .retrieve()
                 .body(JsonNode.class);
         if (root == null || !root.has("rates") || !root.get("rates").has("KRW")) {
-            throw new IllegalStateException("FX 폴백 응답에서 rates.KRW 를 찾을 수 없습니다: " + root);
+            // 응답 본문 전체를 메시지에 박지 않는다. 디버깅엔 최상위 키 목록만 충분.
+            Iterable<String> keys = root != null ? root.propertyNames() : java.util.List.of();
+            throw new IllegalStateException("FX 폴백 응답에서 rates.KRW 를 찾을 수 없습니다 (응답 키: " + keys + ")");
         }
         return new BigDecimal(root.get("rates").get("KRW").asString());
     }
@@ -169,7 +172,8 @@ public class KisMarketDataAdapter implements MarketDataPort {
             throw new IllegalStateException("KIS 응답이 비어있습니다");
         }
         if (!root.has("output")) {
-            throw new IllegalStateException("KIS 응답에 output 노드가 없습니다: " + root);
+            // 응답 본문 전체를 메시지에 박지 않는다. 키 목록만 노출.
+            throw new IllegalStateException("KIS 응답에 output 노드가 없습니다 (응답 키: " + root.propertyNames() + ")");
         }
         return root.get("output");
     }

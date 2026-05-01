@@ -12,12 +12,15 @@ import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Trade;
 import tools.jackson.databind.ObjectMapper;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 /**
@@ -32,6 +35,17 @@ import java.util.function.Function;
  */
 @Configuration
 public class LambdaConfig {
+
+    private static final Logger log = LoggerFactory.getLogger(LambdaConfig.class);
+
+    // 운영 Lambda 는 CORS_ALLOWED_ORIGIN 환경변수가 항상 박혀 있다 (SAM 에서 주입).
+    // 로컬 개발 / 단위 테스트 환경 호환을 위해 미설정 시에만 와일드카드로 폴백.
+    private static final String CORS_ALLOWED_ORIGIN = resolveAllowedOrigin();
+
+    private static String resolveAllowedOrigin() {
+        String env = System.getenv("CORS_ALLOWED_ORIGIN");
+        return (env == null || env.isBlank()) ? "*" : env;
+    }
 
     @Bean
     public Function<APIGatewayProxyRequestEvent, APIGatewayProxyResponseEvent> apiGatewayHandler(
@@ -83,7 +97,7 @@ public class LambdaConfig {
             } catch (DomainException ex) {
                 return badRequest(ex.getMessage());
             } catch (Exception ex) {
-                return serverError(ex.getMessage());
+                return serverError(ex);
             }
         };
     }
@@ -92,7 +106,7 @@ public class LambdaConfig {
         return new APIGatewayProxyResponseEvent()
                 .withStatusCode(204)
                 .withHeaders(Map.of(
-                        "Access-Control-Allow-Origin", "*",
+                        "Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN,
                         "Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS",
                         "Access-Control-Allow-Headers", "Content-Type,x-api-key",
                         "Access-Control-Max-Age", "3600"));
@@ -114,8 +128,11 @@ public class LambdaConfig {
         return response(400, "{\"error\":\"domain_error\",\"message\":" + quote(message) + "}");
     }
 
-    private static APIGatewayProxyResponseEvent serverError(String message) {
-        return response(500, "{\"error\":\"internal\",\"message\":" + quote(message) + "}");
+    private static APIGatewayProxyResponseEvent serverError(Exception ex) {
+        // 사용자에게 stacktrace/메시지를 노출하지 않는다. 운영자는 traceId 로 CloudWatch Logs 에서 추적.
+        String traceId = UUID.randomUUID().toString();
+        log.error("handler failure (traceId={})", traceId, ex);
+        return response(500, "{\"error\":\"internal\",\"traceId\":" + quote(traceId) + "}");
     }
 
     private static APIGatewayProxyResponseEvent response(int status, String body) {
@@ -125,7 +142,7 @@ public class LambdaConfig {
                         "Content-Type", "application/json",
                         // CloudFront 도메인에서 호출되는 SPA 라 actual response 에도 CORS 헤더 필수.
                         // API Gateway Cors 설정은 OPTIONS preflight 만 처리하고 GET/POST 응답엔 영향 없다.
-                        "Access-Control-Allow-Origin", "*"))
+                        "Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN))
                 .withBody(body);
     }
 
