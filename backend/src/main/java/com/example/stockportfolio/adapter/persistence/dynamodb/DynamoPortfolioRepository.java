@@ -178,6 +178,30 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
     }
 
     @Override
+    public List<Trade> listAllTrades() {
+        // SK 오름차순(시간순) 으로 TRADE# prefix 전체 Query. 1인 사용자 가정 하에 페이지네이션 미적용.
+        QueryResponse response = client.query(QueryRequest.builder()
+                .tableName(tableName)
+                .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
+                .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS(USER_PK),
+                        ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
+                .scanIndexForward(true)
+                .build());
+
+        List<Trade> trades = new ArrayList<>(response.items().size());
+        Set<String> seen = new HashSet<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            Trade t = DynamoAttributes.tradeFromItem(item);
+            if (seen.add(t.id())) {
+                trades.add(t);
+            }
+        }
+        return trades;
+    }
+
+    @Override
     public List<Trade> listTradesByType(TradeType type) {
         Objects.requireNonNull(type, "type");
         // SK 오름차순(시간순) 으로 TRADE# prefix 전체 Query 후 type 필터.
@@ -237,6 +261,81 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                 .tableName(tableName)
                 .item(DynamoAttributes.snapshotItem(snapshot))
                 .build());
+    }
+
+    @Override
+    public void deleteTradeAndReplaceDerived(Trade tradeToDelete,
+                                             Set<String> existingTickers,
+                                             Portfolio newState) {
+        Objects.requireNonNull(tradeToDelete, "tradeToDelete");
+        Objects.requireNonNull(existingTickers, "existingTickers");
+        Objects.requireNonNull(newState, "newState");
+
+        List<TransactWriteItem> writes = new ArrayList<>();
+
+        // 1) 거래 1건 Delete (조건부 — 동시 삭제/교차 실행 방지)
+        writes.add(TransactWriteItem.builder()
+                .delete(Delete.builder()
+                        .tableName(tableName)
+                        .key(Map.of(
+                                PK, AttributeValue.fromS(USER_PK),
+                                SK, AttributeValue.fromS(DynamoAttributes.tradeSk(tradeToDelete))))
+                        .conditionExpression("attribute_exists(#sk)")
+                        .expressionAttributeNames(Map.of("#sk", SK))
+                        .build())
+                .build());
+
+        // 2) 사라진 ticker 들의 POSITION# Delete
+        Set<String> newTickers = newState.positions().keySet();
+        for (String ticker : existingTickers) {
+            if (!newTickers.contains(ticker)) {
+                writes.add(TransactWriteItem.builder()
+                        .delete(Delete.builder()
+                                .tableName(tableName)
+                                .key(Map.of(
+                                        PK, AttributeValue.fromS(USER_PK),
+                                        SK, AttributeValue.fromS(POSITION_SK_PREFIX + ticker)))
+                                .build())
+                        .build());
+            }
+        }
+
+        // 3) 새 상태의 POSITION# 모두 Put (덮어쓰기)
+        for (Position p : newState.positions().values()) {
+            writes.add(TransactWriteItem.builder()
+                    .put(Put.builder()
+                            .tableName(tableName)
+                            .item(DynamoAttributes.positionItem(p))
+                            .build())
+                    .build());
+        }
+
+        // 4) CASH#USD Put
+        writes.add(TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(tableName)
+                        .item(DynamoAttributes.cashUsdItem(newState.cashUsd()))
+                        .build())
+                .build());
+
+        // 5) META#PORTFOLIO Put
+        writes.add(TransactWriteItem.builder()
+                .put(Put.builder()
+                        .tableName(tableName)
+                        .item(DynamoAttributes.metaItem(
+                                newState.cumulativeDeposit(),
+                                newState.cumulativeWithdraw()))
+                        .build())
+                .build());
+
+        try {
+            client.transactWriteItems(TransactWriteItemsRequest.builder()
+                    .transactItems(writes)
+                    .build());
+        } catch (TransactionCanceledException e) {
+            // 거래 미존재(condition 실패) 또는 트랜잭션 한도 초과 등.
+            throw new DomainException("거래 삭제/상태 갱신 실패: " + e.getMessage());
+        }
     }
 
     @Override

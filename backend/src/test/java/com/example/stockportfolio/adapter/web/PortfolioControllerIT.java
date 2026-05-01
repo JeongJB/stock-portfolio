@@ -32,6 +32,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -425,6 +426,74 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.snapshots[0].date").value("2026-04-20"))
                 .andExpect(jsonPath("$.snapshots[1].date").value("2026-04-25"))
                 .andExpect(jsonPath("$.snapshots[2].date").value("2026-04-28"));
+    }
+
+    @Test
+    void DELETE_trades_id는_거래를_삭제하고_갱신된_portfolio를_반환한다() throws Exception {
+        // 입금만 있는 상태에서 그 입금을 삭제 → 잔고 0
+        String body = mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"1000.00"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String tradeId = extractTradeId(body);
+
+        mockMvc.perform(delete("/api/trades/" + tradeId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cashUsd").value("0.0000"))
+                .andExpect(jsonPath("$.principalUsd").value("0.0000"));
+
+        mockMvc.perform(get("/api/trades").param("limit", "10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void DELETE_trades_없는_id는_404를_반환한다() throws Exception {
+        mockMvc.perform(delete("/api/trades/non-existent-uuid"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("not_found"));
+    }
+
+    @Test
+    void DELETE_trades_DEPOSIT을_BUY_뒤에_삭제하면_422를_반환한다() throws Exception {
+        // DEPOSIT(10000) → BUY(150*10) → DEPOSIT 삭제 시 매수에서 잔고 부족
+        String depBody = mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"DEPOSIT","cashAmount":"10000"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String depId = extractTradeId(depBody);
+
+        mockMvc.perform(post("/api/trades")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"type":"BUY","ticker":"AAPL","qty":"10","price":"150"}
+                                """))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(delete("/api/trades/" + depId))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error").value("validation_failed"))
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("매수(AAPL)")));
+
+        // 상태 보존: 잔고는 그대로 (10000 - 1500 = 8500)
+        mockMvc.perform(get("/api/portfolio"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cashUsd").value("8500.0000"));
+    }
+
+    private static String extractTradeId(String json) {
+        // {"tradeId":"...","executedAt":"...","type":"..."} 형태에서 단순 추출.
+        int idx = json.indexOf("\"tradeId\":\"");
+        if (idx < 0) throw new IllegalStateException("tradeId 누락: " + json);
+        int start = idx + "\"tradeId\":\"".length();
+        int end = json.indexOf('"', start);
+        return json.substring(start, end);
     }
 
     private static com.example.stockportfolio.adapter.web.dto.SnapshotView snapshotFor(String date) {

@@ -14,7 +14,9 @@ import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -57,6 +59,15 @@ public class PortfolioController {
 
     @GetMapping("/portfolio")
     public PortfolioView portfolio() {
+        return service.view();
+    }
+
+    @DeleteMapping("/trades/{id}")
+    public PortfolioView deleteTrade(@PathVariable("id") String id) {
+        // 1) replay 검증 + 단일 트랜잭션 삭제 (실패 시 NoSuchElementException → 404,
+        //    TradeReplayValidationException → 422; ApiExceptionHandler 가 매핑).
+        service.deleteTrade(id);
+        // 2) 삭제 후 갱신된 포트폴리오 뷰를 본문으로 돌려줘 프론트가 별도 GET 없이 즉시 반영 가능.
         return service.view();
     }
 

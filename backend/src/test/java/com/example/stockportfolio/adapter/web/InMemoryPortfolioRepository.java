@@ -83,6 +83,13 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
     }
 
     @Override
+    public synchronized List<Trade> listAllTrades() {
+        List<Trade> sorted = new ArrayList<>(trades);
+        sorted.sort(Comparator.comparing(Trade::executedAt).thenComparing(Trade::id));
+        return Collections.unmodifiableList(sorted);
+    }
+
+    @Override
     public synchronized List<Trade> listTradesByType(TradeType type) {
         List<Trade> filtered = new ArrayList<>();
         for (Trade t : trades) {
@@ -120,5 +127,23 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
     public synchronized List<SnapshotView> findSnapshots(LocalDate from, LocalDate to) {
         // TreeMap.subMap inclusive both — DynamoDB BETWEEN과 동일 의미
         return List.copyOf(snapshots.subMap(from, true, to, true).values());
+    }
+
+    @Override
+    public synchronized void deleteTradeAndReplaceDerived(Trade tradeToDelete,
+                                                          Set<String> existingTickers,
+                                                          Portfolio newState) {
+        if (!tradeIds.remove(tradeToDelete.id())) {
+            throw new DomainException("거래 삭제 실패 (미존재): " + tradeToDelete.id());
+        }
+        trades.removeIf(t -> t.id().equals(tradeToDelete.id()));
+        // 깊은 복사로 외부 mutation 격리 — recordTrade 와 동일 패턴.
+        Map<String, Position> snapshot = new HashMap<>();
+        newState.positions().forEach((k, v) ->
+                snapshot.put(k, new Position(v.ticker(), v.qty(), v.avgCost(), v.realizedPnl())));
+        this.positions = snapshot;
+        this.cashUsd = newState.cashUsd();
+        this.cumulativeDeposit = newState.cumulativeDeposit();
+        this.cumulativeWithdraw = newState.cumulativeWithdraw();
     }
 }

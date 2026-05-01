@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.web;
 
+import com.example.stockportfolio.application.TradeReplayValidationException;
 import com.example.stockportfolio.domain.DomainException;
 
 import org.springframework.http.HttpStatus;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 /**
  * 검증/도메인 예외를 400으로 일괄 매핑. 그 외는 Spring 기본 처리(500)에 위임.
@@ -37,6 +39,18 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorBody("bad_request", ex.getMessage()));
+    }
+
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<Map<String, Object>> handleNotFound(NoSuchElementException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorBody("not_found", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TradeReplayValidationException.class)
+    public ResponseEntity<Map<String, Object>> handleReplayValidation(TradeReplayValidationException ex) {
+        // 422: 요청 형식은 맞으나 비즈니스 규칙(replay 후 잔고/수량 음수) 위반.
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(errorBody("validation_failed", ex.getMessage()));
     }
 
     private static Map<String, Object> errorBody(String code, String message) {

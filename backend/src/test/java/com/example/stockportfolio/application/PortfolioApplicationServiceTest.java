@@ -29,13 +29,16 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PortfolioApplicationServiceTest {
@@ -460,6 +463,143 @@ class PortfolioApplicationServiceTest {
         assertEquals(9 * 3600, view.asOf().getOffset().getTotalSeconds(), "KST = +09:00");
     }
 
+    // --- deleteTrade ---
+
+    @Test
+    @DisplayName("deleteTrade: 단일 DEPOSIT 삭제 → 잔고/원금 0 으로 복원, 거래 목록에서 사라짐")
+    void deleteTrade_singleDeposit_resetsCashAndPrincipal() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        Trade dep = service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("1000"), null));
+
+        service.deleteTrade(dep.id());
+
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(BigDecimal.ZERO));
+        assertEquals(0, repo.load().principal().amount().compareTo(BigDecimal.ZERO));
+        assertTrue(repo.trades.stream().noneMatch(t -> t.id().equals(dep.id())));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: BUY 후 DEPOSIT 삭제 → 422 (잔고 부족) + 상태는 보존")
+    void deleteTrade_depositBeforeBuyCannotBeRemoved() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        Trade dep = service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+
+        TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
+                () -> service.deleteTrade(dep.id()));
+        assertTrue(ex.getMessage().contains("매수(AAPL)"),
+                "메시지에 실패 거래의 종류·종목이 포함돼야 한다 (실제: " + ex.getMessage() + ")");
+
+        // 상태는 변하지 않았어야 한다 — 삭제는 트랜잭션 직전에 실패했음.
+        assertEquals(2, repo.trades.size());
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(new BigDecimal("8500.0000")));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: 매수 후 매도 시퀀스에서 매수만 삭제 → 422 (보유 수량 부족)")
+    void deleteTrade_removingBuyBeforeSellFails() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        Trade buy = service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("160"),
+                BigDecimal.ZERO, null, null));
+
+        TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
+                () -> service.deleteTrade(buy.id()));
+        assertTrue(ex.getMessage().contains("매도(AAPL)"),
+                "메시지에 매도 거래가 명시돼야 한다 (실제: " + ex.getMessage() + ")");
+    }
+
+    @Test
+    @DisplayName("deleteTrade: 매수+매도 중 매도만 삭제 → BUY 만 남고 포지션 10주로 복원")
+    void deleteTrade_removingSellRebuildsPosition() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        Trade sell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("160"),
+                BigDecimal.ZERO, null, null));
+
+        service.deleteTrade(sell.id());
+
+        Portfolio loaded = repo.load();
+        // 매도가 사라졌으므로 포지션 10주, 현금 10000-1500=8500
+        assertEquals(0, loaded.cashUsd().amount().compareTo(new BigDecimal("8500.0000")));
+        assertEquals(0, loaded.position("AAPL").orElseThrow().qty().value()
+                .compareTo(new BigDecimal("10.000000")));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: 존재하지 않는 id → NoSuchElementException (컨트롤러는 404 매핑)")
+    void deleteTrade_unknownId_throwsNoSuchElement() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        assertThrows(NoSuchElementException.class,
+                () -> service.deleteTrade("non-existent-uuid"));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: DIVIDEND 삭제 → 현금 감소, view() 누적배당도 감소")
+    void deleteTrade_dividendRemoval() {
+        FakeRepository repo = new FakeRepository();
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        PortfolioApplicationService service = newService(repo, market);
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        Trade div = service.recordTrade(new RecordTradeCommand(
+                TradeType.DIVIDEND, Instant.parse("2026-03-01T00:00:00Z"),
+                "AAPL", null, null, null, new BigDecimal("50"), null));
+
+        // 삭제 전 view: 현금 = 10000 - 1500 + 50 = 8550, 평가손익 = (200-150)*10 + 50 = 550
+        PortfolioView before = service.view();
+        assertEquals(0, before.cashUsd().compareTo(new BigDecimal("8550.0000")));
+        assertEquals(0, before.totalUnrealizedPnlUsd().compareTo(new BigDecimal("550.0000")));
+
+        service.deleteTrade(div.id());
+
+        PortfolioView after = service.view();
+        // 현금 = 8500, 평가손익 = (200-150)*10 = 500 (배당 50 사라짐)
+        assertEquals(0, after.cashUsd().compareTo(new BigDecimal("8500.0000")));
+        assertEquals(0, after.totalUnrealizedPnlUsd().compareTo(new BigDecimal("500.0000")));
+        assertFalse(repo.trades.stream().anyMatch(t -> t.id().equals(div.id())));
+    }
+
     private static SnapshotView stubSnapshot(String isoDate) {
         BigDecimal zero = new BigDecimal("0.0000");
         return new SnapshotView(
@@ -526,6 +666,11 @@ class PortfolioApplicationServiceTest {
         @Override public List<Trade> listRecentTrades(int limit) {
             return List.of();
         }
+        @Override public List<Trade> listAllTrades() {
+            List<Trade> sorted = new ArrayList<>(trades);
+            sorted.sort(java.util.Comparator.comparing(Trade::executedAt).thenComparing(Trade::id));
+            return sorted;
+        }
         @Override public List<Trade> listTradesByType(TradeType type) {
             List<Trade> filtered = new ArrayList<>();
             for (Trade t : trades) {
@@ -541,6 +686,12 @@ class PortfolioApplicationServiceTest {
         }
         @Override public List<SnapshotView> findSnapshots(LocalDate from, LocalDate to) {
             return new ArrayList<>(snapshots.subMap(from, true, to, true).values());
+        }
+        @Override public void deleteTradeAndReplaceDerived(Trade tradeToDelete,
+                                                           java.util.Set<String> existingTickers,
+                                                           Portfolio newState) {
+            trades.removeIf(t -> t.id().equals(tradeToDelete.id()));
+            this.current = newState;
         }
     }
 

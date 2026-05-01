@@ -48,6 +48,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -493,6 +494,74 @@ class DynamoPortfolioRepositoryIT {
 
         Trade roundTripped = repository.listRecentTrades(1).get(0);
         assertThat(roundTripped.memo()).isNull();
+    }
+
+    @Test
+    void deleteTradeAndReplaceDerived는_거래와_파생캐시를_재구성한다() {
+        Portfolio portfolio = new Portfolio();
+        Trade dep = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("10000", Currency.USD));
+        portfolio.apply(dep);
+        repository.recordTrade(dep, portfolio);
+
+        Trade buy = Trade.buy(Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", Quantity.of("10"),
+                Money.of("150", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buy);
+        repository.recordTrade(buy, portfolio);
+
+        // BUY 만 삭제하고 DEPOSIT 만 남기 → replay 후 cash=10000, AAPL 포지션 사라짐
+        Portfolio rebuilt = new Portfolio();
+        rebuilt.apply(dep);
+
+        repository.deleteTradeAndReplaceDerived(buy, Set.of("AAPL"), rebuilt);
+
+        Portfolio loaded = repository.load();
+        assertThat(loaded.cashUsd()).isEqualTo(Money.of("10000", Currency.USD));
+        assertThat(loaded.positions()).doesNotContainKey("AAPL");
+
+        // listRecentTrades 에서도 BUY 가 사라져야 함
+        List<Trade> recent = repository.listRecentTrades(10);
+        assertThat(recent).hasSize(1);
+        assertThat(recent.get(0).id()).isEqualTo(dep.id());
+    }
+
+    @Test
+    void deleteTradeAndReplaceDerived는_없는_거래에_대해_예외를_던진다() {
+        Portfolio empty = new Portfolio();
+        Trade ghost = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("100", Currency.USD));
+
+        assertThatThrownBy(() ->
+                repository.deleteTradeAndReplaceDerived(ghost, Set.of(), empty))
+                .isInstanceOf(DomainException.class);
+    }
+
+    @Test
+    void listAllTrades는_시간_오름차순으로_모든_거래를_반환한다() {
+        Portfolio portfolio = new Portfolio();
+        Trade t1 = Trade.deposit(Instant.parse("2026-01-03T00:00:00Z"),
+                Money.of("300", Currency.USD));
+        portfolio.apply(t1);
+        repository.recordTrade(t1, portfolio);
+
+        Trade t2 = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("100", Currency.USD));
+        portfolio.apply(t2);
+        repository.recordTrade(t2, portfolio);
+
+        Trade t3 = Trade.deposit(Instant.parse("2026-01-02T00:00:00Z"),
+                Money.of("200", Currency.USD));
+        portfolio.apply(t3);
+        repository.recordTrade(t3, portfolio);
+
+        List<Trade> all = repository.listAllTrades();
+
+        assertThat(all).hasSize(3);
+        // 시간 오름차순: t2(01-01), t3(01-02), t1(01-03)
+        assertThat(all.get(0).id()).isEqualTo(t2.id());
+        assertThat(all.get(1).id()).isEqualTo(t3.id());
+        assertThat(all.get(2).id()).isEqualTo(t1.id());
     }
 
     @Test
