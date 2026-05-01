@@ -15,7 +15,7 @@ body {
 
 .recharts-wrapper:focus,
 .recharts-wrapper:focus-visible,
-.recharts-surface:focus,
-.recharts-surface:focus-visible {
+.recharts-wrapper :focus,
+.recharts-wrapper :focus-visible {
   outline: none;
 }
