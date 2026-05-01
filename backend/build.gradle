@@ -35,7 +35,7 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-function-adapter-aws'
     implementation 'com.amazonaws:aws-lambda-java-events:3.13.0'
 
-    implementation platform('software.amazon.awssdk:bom:2.32.5')
+    implementation platform('software.amazon.awssdk:bom:2.43.2')
     implementation 'software.amazon.awssdk:dynamodb'
     implementation 'software.amazon.awssdk:ssm'
     implementation 'software.amazon.awssdk:url-connection-client'
