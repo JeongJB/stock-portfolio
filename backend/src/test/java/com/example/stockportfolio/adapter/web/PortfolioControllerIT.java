@@ -459,7 +459,8 @@ class PortfolioControllerIT {
 
     @Test
     void DELETE_trades_DEPOSIT을_BUY_뒤에_삭제하면_422를_반환한다() throws Exception {
-        // DEPOSIT(10000) → BUY(150*10) → DEPOSIT 삭제 시 매수에서 잔고 부족
+        // DEPOSIT(10000) → BUY(150*10=1500) → 현재 현금 8500.
+        // 새 검증(현재 상태 역산): DEPOSIT 10000 삭제 → 8500 - 10000 = -1500 < 0 → 거부.
         String depBody = mockMvc.perform(post("/api/trades")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -479,7 +480,7 @@ class PortfolioControllerIT {
         mockMvc.perform(delete("/api/trades/" + depId))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("validation_failed"))
-                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("매수(AAPL)")));
+                .andExpect(jsonPath("$.message", org.hamcrest.Matchers.containsString("입금")));
 
         // 상태 보존: 잔고는 그대로 (10000 - 1500 = 8500)
         mockMvc.perform(get("/api/portfolio"))

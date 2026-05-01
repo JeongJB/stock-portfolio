@@ -4,7 +4,7 @@ import com.example.stockportfolio.adapter.web.dto.PortfolioView;
 import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.adapter.web.dto.TradeView;
-import com.example.stockportfolio.domain.DomainException;
+import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.Exchange;
 import com.example.stockportfolio.domain.IrrCalculator;
 import com.example.stockportfolio.domain.MarketDataPort;
@@ -12,6 +12,7 @@ import com.example.stockportfolio.domain.Money;
 import com.example.stockportfolio.domain.Portfolio;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
+import com.example.stockportfolio.domain.Quantity;
 import com.example.stockportfolio.domain.Quote;
 import com.example.stockportfolio.domain.Trade;
 import com.example.stockportfolio.domain.TradeType;
@@ -26,9 +27,9 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,7 +43,6 @@ public class PortfolioApplicationService {
     private static final Logger log = LoggerFactory.getLogger(PortfolioApplicationService.class);
 
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
-    private static final DateTimeFormatter KST_TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     // weight 분모가 0일 때(빈 포트폴리오)도 BigDecimal nominator/denominator 정밀도가 보존되도록 별도 scale 선언.
     private static final int WEIGHT_SCALE = 6;
     // 스냅샷 GET 기본 윈도: 최근 90일.
@@ -73,15 +73,20 @@ public class PortfolioApplicationService {
     }
 
     /**
-     * 거래 1건 삭제 후 남은 모든 거래를 시간순으로 replay 해 POSITION/CASH/META 를 재계산한다.
+     * 거래 1건 삭제 시 현재 Portfolio 상태에서 해당 거래의 효과를 역산해 새 상태를 계산한다.
      *
      * <p>원칙:
      * <ul>
      *   <li>대상 id 가 없으면 {@link NoSuchElementException} → 컨트롤러가 404 로 매핑.
-     *   <li>replay 중 도메인 불변식(잔고 부족·보유 수량 부족) 위반이면
-     *       {@link TradeReplayValidationException} → 컨트롤러가 422 로 매핑. 실패 거래의 시각·종류를
-     *       메시지에 포함해 사용자가 어느 거래 때문인지 식별 가능하게 한다.
-     *   <li>replay 성공 시 단일 트랜잭션으로 거래 삭제 + 파생 캐시 통째 교체.
+     *   <li>전역 replay 가 아니라 <b>현재 상태 - 거래 효과</b> 로 계산하므로 backfill 패턴
+     *       (과거 시각의 매수 + 최근 시각의 입금) 도 정상 처리된다. 원본 데이터(append-only 거래) 는
+     *       이미 도메인 불변식을 만족한 상태로 저장돼 있으므로 그 결과인 현재 상태에서 역산하는 것이 옳다.
+     *   <li>BUY/SELL 삭제는 해당 ticker 의 모든 BUY/SELL 거래(대상 제외) 를 시간순으로 ticker-local replay
+     *       해 Position 을 재계산한다 (가중평균 단가가 거래 순서에 의존). DEPOSIT/WITHDRAW/DIVIDEND 삭제는
+     *       현금만 단순 가감.
+     *   <li>역산 결과가 도메인 불변식(음수 잔고/포지션) 을 위반하면
+     *       {@link TradeReplayValidationException} → 컨트롤러가 422 로 매핑.
+     *   <li>역산 성공 시 단일 트랜잭션으로 거래 삭제 + 파생 캐시 통째 교체.
      * </ul>
      */
     public void deleteTrade(String tradeId) {
@@ -92,41 +97,184 @@ public class PortfolioApplicationService {
                 .findFirst()
                 .orElseThrow(() -> new NoSuchElementException("거래를 찾을 수 없습니다: " + tradeId));
 
-        // 시간 오름차순 sort 는 listAllTrades 가 이미 보장 — defensive 로 한 번 더.
-        List<Trade> remaining = new ArrayList<>(all.size());
-        for (Trade t : all) {
-            if (!t.id().equals(target.id())) remaining.add(t);
-        }
-        remaining.sort(Comparator.comparing(Trade::executedAt).thenComparing(Trade::id));
-
-        Portfolio currentBeforeDelete = repository.load();
-        Portfolio rebuilt = new Portfolio();
-        for (Trade t : remaining) {
-            try {
-                rebuilt.apply(t);
-            } catch (DomainException ex) {
-                String when = OffsetDateTime.ofInstant(t.executedAt(), KST)
-                        .format(KST_TS_FMT);
-                throw new TradeReplayValidationException(
-                        "이 거래를 삭제하면 " + when + " KST 의 " + describe(t)
-                                + " 거래에서 도메인 불변식이 깨집니다: " + ex.getMessage());
-            }
-        }
+        Portfolio current = repository.load();
+        Portfolio rebuilt = computeStateAfterDelete(current, target, all);
 
         repository.deleteTradeAndReplaceDerived(
                 target,
-                currentBeforeDelete.positions().keySet(),
+                current.positions().keySet(),
                 rebuilt);
     }
 
-    private static String describe(Trade t) {
-        return switch (t.type()) {
-            case BUY -> "매수(" + t.ticker() + ")";
-            case SELL -> "매도(" + t.ticker() + ")";
-            case DEPOSIT -> "입금";
-            case WITHDRAW -> "출금";
-            case DIVIDEND -> "배당(" + t.ticker() + ")";
-        };
+    /**
+     * 현재 상태 + 삭제 대상 거래 → 삭제 후 새 Portfolio. 검증 실패 시
+     * {@link TradeReplayValidationException} 을 던진다. 부수 효과 없음.
+     */
+    private static Portfolio computeStateAfterDelete(Portfolio current, Trade target, List<Trade> allTrades) {
+        // 새 positions Map 은 ticker-local replay 결과로 채우므로 BUY/SELL 이 아닌 경우엔 현재 값을 그대로 복사.
+        Map<String, Position> newPositions = new HashMap<>();
+        for (Map.Entry<String, Position> e : current.positions().entrySet()) {
+            Position p = e.getValue();
+            newPositions.put(e.getKey(), new Position(p.ticker(), p.qty(), p.avgCost(), p.realizedPnl()));
+        }
+        Money cash = current.cashUsd();
+        Money cumulativeDeposit = current.cumulativeDeposit();
+        Money cumulativeWithdraw = current.cumulativeWithdraw();
+
+        switch (target.type()) {
+            case DEPOSIT -> {
+                Money amount = requireCashAmount(target);
+                if (cash.isLessThan(amount)) {
+                    throw new TradeReplayValidationException(
+                            "현재 현금 잔고 (" + cash.amount().toPlainString() + " USD) 가 "
+                                    + "삭제 대상 입금 (" + amount.amount().toPlainString() + " USD) 보다 적어 삭제할 수 없습니다");
+                }
+                cash = cash.subtract(amount);
+                cumulativeDeposit = cumulativeDeposit.subtract(amount);
+            }
+            case WITHDRAW -> {
+                Money amount = requireCashAmount(target);
+                cash = cash.add(amount);
+                cumulativeWithdraw = cumulativeWithdraw.subtract(amount);
+            }
+            case DIVIDEND -> {
+                Money amount = requireCashAmount(target);
+                if (cash.isLessThan(amount)) {
+                    throw new TradeReplayValidationException(
+                            "현재 현금 잔고 (" + cash.amount().toPlainString() + " USD) 가 "
+                                    + "삭제 대상 배당 (" + amount.amount().toPlainString() + " USD) 보다 적어 삭제할 수 없습니다");
+                }
+                cash = cash.subtract(amount);
+            }
+            case BUY -> {
+                String ticker = requireTicker(target);
+                Quantity qty = requireQty(target);
+                Money price = requirePrice(target);
+                Money fee = target.feeOpt().orElse(Money.zero(Currency.USD));
+                Money cost = price.multiply(qty.value()).add(fee);
+
+                // BUY 삭제 → 현금이 그대로 돌아옴. 음수가 될 수 없음(현금 가감만으로는).
+                cash = cash.add(cost);
+
+                Position rebuiltPosition = recomputePosition(ticker, allTrades, target);
+                if (rebuiltPosition != null && rebuiltPosition.qty().isNegative()) {
+                    Position currentPosition = current.positions().get(ticker);
+                    Quantity owned = currentPosition == null ? Quantity.zero() : currentPosition.qty();
+                    throw new TradeReplayValidationException(
+                            "이 매수를 삭제하면 종목 " + ticker + " 의 보유 수량이 음수가 됩니다 "
+                                    + "(현재 " + owned + " 주, 매수 수량 " + qty + " 주)");
+                }
+                if (rebuiltPosition == null) {
+                    newPositions.remove(ticker);
+                } else {
+                    newPositions.put(ticker, rebuiltPosition);
+                }
+            }
+            case SELL -> {
+                String ticker = requireTicker(target);
+                Quantity qty = requireQty(target);
+                Money price = requirePrice(target);
+                Money fee = target.feeOpt().orElse(Money.zero(Currency.USD));
+                Money proceeds = price.multiply(qty.value()).subtract(fee);
+
+                if (cash.isLessThan(proceeds)) {
+                    throw new TradeReplayValidationException(
+                            "이 매도를 삭제하면 현금 잔고가 음수가 됩니다 "
+                                    + "(현재 " + cash.amount().toPlainString() + " USD, "
+                                    + "매도대금 " + proceeds.amount().toPlainString() + " USD)");
+                }
+                cash = cash.subtract(proceeds);
+
+                Position rebuiltPosition = recomputePosition(ticker, allTrades, target);
+                // 매도 삭제 → 수량 회복이므로 음수가 될 수 없으나 방어적으로 점검.
+                if (rebuiltPosition != null && rebuiltPosition.qty().isNegative()) {
+                    throw new TradeReplayValidationException(
+                            "이 매도를 삭제하면 종목 " + ticker + " 의 보유 수량이 음수가 됩니다");
+                }
+                if (rebuiltPosition == null) {
+                    newPositions.remove(ticker);
+                } else {
+                    newPositions.put(ticker, rebuiltPosition);
+                }
+            }
+        }
+
+        return new Portfolio(newPositions, cash, cumulativeDeposit, cumulativeWithdraw);
+    }
+
+    /**
+     * 특정 ticker 의 BUY/SELL 거래(대상 제외) 만 시간순으로 누적 적용해 Position 을 재계산한다.
+     * DIVIDEND 는 Position 의 수량/평균단가에 영향이 없어 무시한다(현금만 영향).
+     * 가중평균 단가 산식은 Portfolio 의 BUY 적용 로직과 동일.
+     * 거래가 0건이면 null 반환 → 호출자가 positions Map 에서 제거.
+     *
+     * <p>Portfolio 를 거치지 않는 이유: 매수 시 잔고 검증이 동반되므로 ticker-local replay 가
+     * 가짜 잔고 시드로 우회해야 한다. 그보다 산식만 직접 수행하는 편이 단순.
+     */
+    private static Position recomputePosition(String ticker, List<Trade> allTrades, Trade target) {
+        List<Trade> tickerTrades = new ArrayList<>();
+        for (Trade t : allTrades) {
+            if (t.id().equals(target.id())) continue;
+            if (!ticker.equals(t.ticker())) continue;
+            if (t.type() != TradeType.BUY && t.type() != TradeType.SELL) continue;
+            tickerTrades.add(t);
+        }
+        if (tickerTrades.isEmpty()) {
+            return null;
+        }
+        tickerTrades.sort(Comparator.comparing(Trade::executedAt).thenComparing(Trade::id));
+
+        Quantity qty = Quantity.zero();
+        Money avgCost = Money.zero(Currency.USD);
+        Money realized = Money.zero(Currency.USD);
+        for (Trade t : tickerTrades) {
+            if (t.type() == TradeType.BUY) {
+                Quantity newQty = qty.add(t.qty());
+                BigDecimal existingValue = avgCost.amount().multiply(qty.value());
+                BigDecimal incomingValue = t.price().amount().multiply(t.qty().value());
+                BigDecimal newAvg = existingValue.add(incomingValue)
+                        .divide(newQty.value(), Money.SCALE, Money.ROUNDING);
+                qty = newQty;
+                avgCost = Money.of(newAvg, Currency.USD);
+            } else { // SELL
+                Money fee = t.feeOpt().orElse(Money.zero(Currency.USD));
+                BigDecimal pnlPerShare = t.price().amount().subtract(avgCost.amount());
+                Money sellRealized = Money.of(pnlPerShare.multiply(t.qty().value()), Currency.USD).subtract(fee);
+                realized = realized.add(sellRealized);
+                qty = qty.subtract(t.qty());
+                if (qty.isZero()) {
+                    avgCost = Money.zero(Currency.USD);
+                }
+            }
+        }
+        if (qty.isZero()) {
+            return null;
+        }
+        return new Position(ticker, qty, avgCost, realized);
+    }
+
+    private static Money requireCashAmount(Trade trade) {
+        return trade.cashAmountOpt()
+                .orElseThrow(() -> new IllegalStateException(
+                        trade.type() + " 거래에 cashAmount 가 없습니다 (id=" + trade.id() + ")"));
+    }
+
+    private static String requireTicker(Trade trade) {
+        return trade.tickerOpt()
+                .orElseThrow(() -> new IllegalStateException(
+                        trade.type() + " 거래에 ticker 가 없습니다 (id=" + trade.id() + ")"));
+    }
+
+    private static Quantity requireQty(Trade trade) {
+        return trade.qtyOpt()
+                .orElseThrow(() -> new IllegalStateException(
+                        trade.type() + " 거래에 qty 가 없습니다 (id=" + trade.id() + ")"));
+    }
+
+    private static Money requirePrice(Trade trade) {
+        return trade.priceOpt()
+                .orElseThrow(() -> new IllegalStateException(
+                        trade.type() + " 거래에 price 가 없습니다 (id=" + trade.id() + ")"));
     }
 
     public PortfolioView view() {

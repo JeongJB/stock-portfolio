@@ -483,8 +483,9 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
-    @DisplayName("deleteTrade: BUY 후 DEPOSIT 삭제 → 422 (잔고 부족) + 상태는 보존")
-    void deleteTrade_depositBeforeBuyCannotBeRemoved() {
+    @DisplayName("deleteTrade: 현재 현금 < 삭제 대상 입금 → 422 (현금 부족) + 상태는 보존")
+    void deleteTrade_depositLargerThanCurrentCashFails() {
+        // DEPOSIT(10000) 후 BUY(150*10=1500) → 현재 현금 8500. DEPOSIT 10000 삭제 시 8500 < 10000 → 거부.
         FakeRepository repo = new FakeRepository();
         PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
 
@@ -498,8 +499,8 @@ class PortfolioApplicationServiceTest {
 
         TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
                 () -> service.deleteTrade(dep.id()));
-        assertTrue(ex.getMessage().contains("매수(AAPL)"),
-                "메시지에 실패 거래의 종류·종목이 포함돼야 한다 (실제: " + ex.getMessage() + ")");
+        assertTrue(ex.getMessage().contains("입금"),
+                "메시지에 입금 키워드가 포함돼야 한다 (실제: " + ex.getMessage() + ")");
 
         // 상태는 변하지 않았어야 한다 — 삭제는 트랜잭션 직전에 실패했음.
         assertEquals(2, repo.trades.size());
@@ -507,7 +508,7 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
-    @DisplayName("deleteTrade: 매수 후 매도 시퀀스에서 매수만 삭제 → 422 (보유 수량 부족)")
+    @DisplayName("deleteTrade: 매수 후 매도 시퀀스에서 매수만 삭제 → 422 (ticker-local replay 음수 수량)")
     void deleteTrade_removingBuyBeforeSellFails() {
         FakeRepository repo = new FakeRepository();
         PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
@@ -526,8 +527,8 @@ class PortfolioApplicationServiceTest {
 
         TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
                 () -> service.deleteTrade(buy.id()));
-        assertTrue(ex.getMessage().contains("매도(AAPL)"),
-                "메시지에 매도 거래가 명시돼야 한다 (실제: " + ex.getMessage() + ")");
+        assertTrue(ex.getMessage().contains("AAPL") && ex.getMessage().contains("음수"),
+                "메시지에 AAPL 종목과 음수 수량 표현이 포함돼야 한다 (실제: " + ex.getMessage() + ")");
     }
 
     @Test
@@ -598,6 +599,156 @@ class PortfolioApplicationServiceTest {
         assertEquals(0, after.cashUsd().compareTo(new BigDecimal("8500.0000")));
         assertEquals(0, after.totalUnrealizedPnlUsd().compareTo(new BigDecimal("500.0000")));
         assertFalse(repo.trades.stream().anyMatch(t -> t.id().equals(div.id())));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: backfill 패턴 (최근 입금 + 과거 매수) → 매수 삭제 성공 (사용자 버그 케이스)")
+    void deleteTrade_backfillPatternAllowsRemoval() {
+        // 사용자가 보고한 정확한 시나리오:
+        //  - 최근 입금 1000 USD (2026-04-01)
+        //  - 과거 backfill 매수 100 USD (2020-01-08) — 시간상 입금보다 먼저지만 라이브 입력은 입금 후 매수 순서
+        // 원본 데이터(라이브 입력 순서) 는 합법: 입금 1000 → 매수 100 → 현금 900, AAPL 1주(@100)
+        // 과거 전역 replay 기반 검증은 시간순 sort 후 매수 시점 잔고 0 → 모든 삭제가 422 → false positive.
+        // 새 검증(현재 상태 역산) 은 통과해야 한다: 매수 삭제 → 현금 900+100=1000, 포지션 제거.
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        // recordTrade 는 입력 순서대로 apply 하므로 라이브 흐름을 그대로 재현.
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-04-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("1000"), null));
+        Trade backfillBuy = service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2020-01-08T00:00:00Z"),
+                "AAPL", new BigDecimal("1"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null));
+
+        // 라이브 상태 확인: 현금 900, AAPL 1주
+        Portfolio before = repo.load();
+        assertEquals(0, before.cashUsd().amount().compareTo(new BigDecimal("900.0000")));
+        assertEquals(0, before.position("AAPL").orElseThrow().qty().value()
+                .compareTo(new BigDecimal("1.000000")));
+
+        // 매수 삭제 — 새 흐름에서는 성공해야 한다
+        service.deleteTrade(backfillBuy.id());
+
+        Portfolio after = repo.load();
+        assertEquals(0, after.cashUsd().amount().compareTo(new BigDecimal("1000.0000")),
+                "매수 삭제로 현금이 100 만큼 회복되어야 한다");
+        assertTrue(after.position("AAPL").isEmpty(), "AAPL 포지션은 제거돼야 한다");
+        assertFalse(repo.trades.stream().anyMatch(t -> t.id().equals(backfillBuy.id())));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: BUY 단건 삭제 → ticker 가 0 수량 → positions Map 에서 제거")
+    void deleteTrade_singleBuyRemovedClearsPosition() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("5000"), null));
+        Trade buy = service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+
+        // 삭제 전 AAPL 포지션 존재 확인
+        assertTrue(repo.load().position("AAPL").isPresent());
+
+        service.deleteTrade(buy.id());
+
+        Portfolio after = repo.load();
+        assertTrue(after.position("AAPL").isEmpty(), "단일 매수 삭제 후 포지션은 제거돼야 한다");
+        assertEquals(0, after.cashUsd().amount().compareTo(new BigDecimal("5000.0000")),
+                "현금 = 5000 (매수 1500 회복)");
+    }
+
+    @Test
+    @DisplayName("deleteTrade: SELL 삭제 시 매도대금이 현재 현금보다 큼 → 422 (현금 부족)")
+    void deleteTrade_sellLargerThanCurrentCashFails() {
+        // DEPOSIT(2000) → BUY(150*10=1500) → SELL(5주 @ 160 = 800) → DEPOSIT 1500 출금
+        // 현재 현금 = 2000 - 1500 + 800 - 1500 = -200 ?? 안 됨.
+        // 다시 설계:
+        //  DEPOSIT(2000) → BUY(150*10=1500, 현금 500) → SELL(5주 @ 160 = 800, 현금 1300)
+        //  → WITHDRAW(1000, 현금 300)
+        //  현재 현금 = 300. SELL 삭제 시 현금 -= 800 → -500 → 거부.
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("2000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("150"),
+                BigDecimal.ZERO, null, null));
+        Trade sell = service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("5"), new BigDecimal("160"),
+                BigDecimal.ZERO, null, null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.WITHDRAW, Instant.parse("2026-01-04T00:00:00Z"),
+                null, null, null, null, new BigDecimal("1000"), null));
+
+        // 라이브 현금 = 300 확인
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(new BigDecimal("300.0000")));
+
+        TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
+                () -> service.deleteTrade(sell.id()));
+        assertTrue(ex.getMessage().contains("매도") && ex.getMessage().contains("음수"),
+                "메시지에 매도와 음수 표현이 포함돼야 한다 (실제: " + ex.getMessage() + ")");
+        // 상태 보존
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(new BigDecimal("300.0000")));
+    }
+
+    @Test
+    @DisplayName("deleteTrade: DIVIDEND 삭제 시 현재 현금이 배당보다 작음 → 422")
+    void deleteTrade_dividendLargerThanCurrentCashFails() {
+        // DEPOSIT(100) → DIVIDEND("AAPL", 50) → WITHDRAW(140) → 현재 현금 = 10
+        // DIVIDEND 50 삭제 시 10 < 50 → 거부.
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("100"), null));
+        Trade div = service.recordTrade(new RecordTradeCommand(
+                TradeType.DIVIDEND, Instant.parse("2026-02-01T00:00:00Z"),
+                "AAPL", null, null, null, new BigDecimal("50"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.WITHDRAW, Instant.parse("2026-03-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("140"), null));
+
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(new BigDecimal("10.0000")));
+
+        TradeReplayValidationException ex = assertThrows(TradeReplayValidationException.class,
+                () -> service.deleteTrade(div.id()));
+        assertTrue(ex.getMessage().contains("배당"),
+                "메시지에 배당 키워드가 포함돼야 한다 (실제: " + ex.getMessage() + ")");
+    }
+
+    @Test
+    @DisplayName("deleteTrade: WITHDRAW 삭제는 항상 안전 → 현금 회복")
+    void deleteTrade_withdrawAlwaysAllowed() {
+        FakeRepository repo = new FakeRepository();
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("1000"), null));
+        Trade wd = service.recordTrade(new RecordTradeCommand(
+                TradeType.WITHDRAW, Instant.parse("2026-02-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("700"), null));
+
+        assertEquals(0, repo.load().cashUsd().amount().compareTo(new BigDecimal("300.0000")));
+
+        service.deleteTrade(wd.id());
+
+        Portfolio after = repo.load();
+        assertEquals(0, after.cashUsd().amount().compareTo(new BigDecimal("1000.0000")),
+                "출금 삭제로 현금 회복");
+        assertEquals(0, after.cumulativeWithdraw().amount().compareTo(BigDecimal.ZERO),
+                "누적 출금도 0 으로 복원");
     }
 
     private static SnapshotView stubSnapshot(String isoDate) {
