@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { NavLink, Route, Routes } from 'react-router-dom'
 import { CurrencyToggle } from './components/CurrencyToggle'
+import { InstallButton } from './components/InstallButton'
 
 const Dashboard = lazy(() =>
   import('./pages/Dashboard').then((m) => ({ default: m.Dashboard })),
@@ -47,7 +48,10 @@ export default function App() {
             </NavLink>
           </nav>
         </div>
-        <CurrencyToggle />
+        <div className="flex items-center gap-2">
+          <InstallButton />
+          <CurrencyToggle />
+        </div>
       </header>
       <main>
         <Suspense fallback={<RouteFallback />}>

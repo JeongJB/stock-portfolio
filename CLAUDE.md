@@ -84,6 +84,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | infra: KR-only GeoRestriction | CloudFront `DistributionConfig.Restrictions.GeoRestriction = whitelist [KR]`. 한국 외 IP 는 CloudFront 단계에서 403. API Gateway 는 별도 차단 안 함 (API Key + 정상 호출 흐름이 프론트 경유라 우회 가치 낮음, WAF $5/월 회피). 해외 출장 시 일시 허용은 template Locations 추가 + redeploy. |
 | FE: 라우트 기반 코드 분할 | `App.tsx` 의 4개 페이지(Dashboard/Trades/Snapshots/History)를 `React.lazy` + `<Suspense>` 로 동적 import. recharts(`CategoricalChart`)는 Dashboard/Snapshots 가 공유하므로 vite/rollup 이 자동으로 별도 shared 청크(~320KB)로 분리. 메인 청크 695KB → 261KB(메인 vendor) + 페이지별 4~51KB, 빌드 경고(`Some chunks are larger than 500 kB`) 해소. PWA precache 총량은 비슷 — 첫 방문 1회 성능 향상 목적. Suspense fallback 은 기존 "로딩 중..." 텍스트와 동일한 패턴. |
 | FE-9 모바일 레이아웃 (다크모드·접근성 제외) | 모바일 375~414px 가정 보강. 표(포지션·거래 내역)는 `overflow-x-auto` 가로 스크롤 + 셀 `whitespace-nowrap`, 거래 내역은 첫 컬럼(시각) `sticky left-0` 으로 행 식별 유지. 헤더 nav 4개는 패딩/텍스트 축소(`text-lg sm:text-2xl`, `gap-x-3`)로 한 행 유지(햄버거 미도입). TradeForm 5탭은 외부 wrapper `overflow-x-auto`, 탭 `whitespace-nowrap`. 입력 필드 `inputMode="decimal"` (기존 유지) + 주요 버튼 `min-h-[44px]` (Apple HIG). `index.html` viewport `viewport-fit=cover`, `body { overflow-x: hidden }` 로 의도치 않은 가로 스크롤 0. 다크모드와 접근성 a11y 보강은 1인용 가치 작아 보류. |
+| FE: in-app 설치 버튼 | 헤더 우측에 PWA 설치 버튼. `useInstallPrompt` 훅이 `beforeinstallprompt` 이벤트를 잡아 저장, 클릭 시 native install dialog. 이미 설치되었거나(`display-mode: standalone`) 이벤트가 발생 안 한 환경(iOS Safari 등)엔 버튼 자동 숨김. Android Chrome 의 자동 prompt 가 환경에 따라 안 뜨는 케이스 보완. |
 
 ### 다음 단계 (재개 시 이 순서)
 
