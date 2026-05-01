@@ -8,9 +8,6 @@ on:
       - 'frontend/**'
       - 'infra/deploy-frontend.sh'
       - '.github/workflows/frontend-deploy.yml'
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:

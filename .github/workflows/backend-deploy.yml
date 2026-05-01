@@ -9,9 +9,6 @@ on:
       - 'infra/template.yaml'
       - 'infra/deploy.sh'
       - '.github/workflows/backend-deploy.yml'
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
   workflow_dispatch:
 
 permissions:
