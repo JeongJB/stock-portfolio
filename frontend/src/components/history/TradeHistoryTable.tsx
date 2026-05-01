@@ -44,7 +44,7 @@ export function TradeHistoryTable({ trades }: Props) {
       <table className="min-w-full text-sm">
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
           <tr>
-            <Th align="left">시각 (KST)</Th>
+            <Th align="left" className="sticky left-0 z-10 bg-slate-50 dark:bg-slate-800">시각 (KST)</Th>
             <Th align="left">종류</Th>
             <Th align="left">종목</Th>
             <Th>수량</Th>
@@ -74,7 +74,7 @@ function Row({ trade }: { trade: TradeView }) {
 
   return (
     <tr>
-      <Td align="left" className="whitespace-nowrap text-slate-700 dark:text-slate-200">
+      <Td align="left" className="sticky left-0 z-10 bg-white text-slate-700 dark:bg-slate-900 dark:text-slate-200">
         {formatKstDateTime(trade.executedAt)}
       </Td>
       <Td align="left">
@@ -90,7 +90,7 @@ function Row({ trade }: { trade: TradeView }) {
       <Td>{showQty ? formatQty(trade.qty) : '—'}</Td>
       <Td>{showPrice ? formatMoney(trade.price, 'USD') : '—'}</Td>
       <Td>{amountUsd != null ? formatMoney(amountUsd, 'USD') : '—'}</Td>
-      <Td align="left" className="max-w-xs whitespace-pre-wrap break-words text-slate-600 dark:text-slate-300">
+      <Td align="left" wrap className="max-w-xs break-words text-slate-600 dark:text-slate-300">
         {showMemo ? (trade.memo ?? '—') : '—'}
       </Td>
     </tr>
@@ -111,14 +111,16 @@ function computeAmountUsd(trade: TradeView): string | null {
 function Th({
   children,
   align = 'right',
+  className = '',
 }: {
   children: React.ReactNode
   align?: 'left' | 'right'
+  className?: string
 }) {
   return (
     <th
       scope="col"
-      className={`px-3 py-2 ${align === 'left' ? 'text-left' : 'text-right'}`}
+      className={`whitespace-nowrap px-3 py-2 ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
     >
       {children}
     </th>
@@ -129,14 +131,17 @@ function Td({
   children,
   align = 'right',
   className = '',
+  wrap = false,
 }: {
   children: React.ReactNode
   align?: 'left' | 'right'
   className?: string
+  // 비고 셀처럼 긴 텍스트는 wrap 허용. 기본은 nowrap 으로 가로 스크롤 시 컬럼 정렬 유지.
+  wrap?: boolean
 }) {
   return (
     <td
-      className={`px-3 py-2 tabular-nums ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
+      className={`${wrap ? 'whitespace-pre-wrap' : 'whitespace-nowrap'} px-3 py-2 tabular-nums ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
     >
       {children}
     </td>

@@ -312,7 +312,7 @@ export function TradeForm() {
         <button
           type="submit"
           disabled={isPending}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300 dark:disabled:bg-slate-600"
+          className="min-h-[44px] rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-400 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-slate-300 dark:disabled:bg-slate-600"
         >
           {isPending ? '기록 중...' : '거래 기록'}
         </button>
@@ -330,32 +330,35 @@ function TradeTypeTabs({
   onChange: (t: TradeType) => void
   disabled: boolean
 }) {
+  // 5개 탭이 모바일 375px 폭을 넘을 수 있어 외부 wrapper 에 가로 스크롤 허용.
   return (
-    <div
-      role="tablist"
-      aria-label="거래 종류"
-      className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
-    >
-      {TRADE_TYPES.map(({ type: t, label }) => {
-        const active = type === t
-        return (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            disabled={disabled}
-            onClick={() => onChange(t)}
-            className={
-              active
-                ? 'rounded-sm bg-slate-900 px-3 py-1.5 text-white dark:bg-slate-100 dark:text-slate-900'
-                : 'rounded-sm px-3 py-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-100'
-            }
-          >
-            {label}
-          </button>
-        )
-      })}
+    <div className="-mx-1 overflow-x-auto px-1">
+      <div
+        role="tablist"
+        aria-label="거래 종류"
+        className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 text-sm font-medium dark:border-slate-700 dark:bg-slate-900"
+      >
+        {TRADE_TYPES.map(({ type: t, label }) => {
+          const active = type === t
+          return (
+            <button
+              key={t}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              disabled={disabled}
+              onClick={() => onChange(t)}
+              className={
+                active
+                  ? 'min-h-[44px] whitespace-nowrap rounded-sm bg-slate-900 px-3 py-1.5 text-white dark:bg-slate-100 dark:text-slate-900'
+                  : 'min-h-[44px] whitespace-nowrap rounded-sm px-3 py-1.5 text-slate-600 hover:text-slate-900 disabled:opacity-50 dark:text-slate-400 dark:hover:text-slate-100'
+              }
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -381,7 +384,7 @@ function BuyModeRadio({
           { value: 'add' as BuyMode, label: '추가 매수' },
         ]
       ).map(({ value, label }) => (
-        <label key={value} className="inline-flex items-center gap-1.5">
+        <label key={value} className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 py-1">
           <input
             type="radio"
             name="buyMode"
@@ -389,7 +392,7 @@ function BuyModeRadio({
             checked={mode === value}
             onChange={() => onChange(value)}
             disabled={disabled}
-            className="h-4 w-4 accent-slate-900 dark:accent-slate-100"
+            className="h-5 w-5 accent-slate-900 dark:accent-slate-100"
           />
           <span>{label}</span>
         </label>
@@ -570,7 +573,7 @@ function ExecutedAtControl({
           type="button"
           onClick={onToggle}
           disabled={disabled}
-          className="rounded border border-slate-300 px-2 py-0.5 text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          className="min-h-[36px] rounded border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           {open ? '지금으로 되돌리기' : '과거 시각 입력'}
         </button>

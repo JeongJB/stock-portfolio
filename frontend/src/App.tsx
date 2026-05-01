@@ -28,11 +28,11 @@ function RouteFallback() {
 
 export default function App() {
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-6">
-          <h1 className="text-2xl font-semibold">Stock Portfolio</h1>
-          <nav className="flex gap-4 text-sm">
+    <div className="mx-auto max-w-5xl space-y-6 p-3 sm:p-6">
+      <header className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:gap-x-6">
+          <h1 className="text-lg font-semibold sm:text-2xl">Stock Portfolio</h1>
+          <nav className="flex flex-wrap gap-x-3 gap-y-1 text-sm sm:gap-4">
             <NavLink to="/" end className={navLinkClass}>
               대시보드
             </NavLink>

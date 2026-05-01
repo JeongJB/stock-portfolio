@@ -111,7 +111,7 @@ function Th({
   return (
     <th
       scope="col"
-      className={`px-3 py-2 ${align === 'left' ? 'text-left' : 'text-right'}`}
+      className={`whitespace-nowrap px-3 py-2 ${align === 'left' ? 'text-left' : 'text-right'}`}
     >
       {children}
     </th>
@@ -129,7 +129,7 @@ function Td({
 }) {
   return (
     <td
-      className={`px-3 py-2 tabular-nums ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
+      className={`whitespace-nowrap px-3 py-2 tabular-nums ${align === 'left' ? 'text-left' : 'text-right'} ${className}`}
     >
       {children}
     </td>

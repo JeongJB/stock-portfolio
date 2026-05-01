@@ -21,8 +21,8 @@ export function CurrencyToggle() {
             onClick={() => setCurrency(opt)}
             className={
               active
-                ? 'rounded-sm bg-slate-900 px-3 py-1 text-white dark:bg-slate-100 dark:text-slate-900'
-                : 'rounded-sm px-3 py-1 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                ? 'min-h-[36px] rounded-sm bg-slate-900 px-3 py-1 text-white dark:bg-slate-100 dark:text-slate-900'
+                : 'min-h-[36px] rounded-sm px-3 py-1 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
             }
           >
             {opt}

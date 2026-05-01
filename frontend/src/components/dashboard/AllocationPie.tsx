@@ -66,14 +66,14 @@ export function AllocationPie({ data }: Props) {
       <h3 className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
       <div className="h-72">
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          <PieChart margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
             <Pie
               data={slices}
               dataKey="weight"
               nameKey="name"
               cx="50%"
               cy="50%"
-              outerRadius="80%"
+              outerRadius="70%"
               label={(entry: { name?: string }) => entry.name ?? ''}
             >
               {slices.map((s, idx) => (
