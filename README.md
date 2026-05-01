@@ -124,8 +124,9 @@ Java 25 toolchain 첫 실행 시 Gradle 이 JDK 를 자동 다운로드.
 
 ## 더 많은 정보
 
+- **[SETUP.md](SETUP.md)** — **처음 사용하는 경우 여기부터** — 사전 준비부터 첫 거래 입력까지 순차 가이드 (30~60분)
 - **[CLAUDE.md](CLAUDE.md)** — 진행 로드맵, 완료 항목, 다음 단계, 핵심 결정사항. AI 에이전트용 컨텍스트지만 사람이 읽기에도 정확
-- **[docs/deploy.md](docs/deploy.md)** — 운영 빠른 참조
+- **[docs/deploy.md](docs/deploy.md)** — 운영 빠른 참조 (이미 배포된 상태에서 코드 변경 후 재배포 흐름)
 - **[infra/README.md](infra/README.md)** — IAM 사전 권한, deploy wrapper 사용법, 회전 절차
 - **[infra/iam/README.md](infra/iam/README.md)** — GitHub Actions OIDC Role 생성 명령
 
