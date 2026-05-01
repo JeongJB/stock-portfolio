@@ -16,6 +16,7 @@ interface Props {
 export function SummaryCards({ data }: Props) {
   const { currency } = useCurrency()
 
+  const totalAssets = currency === 'USD' ? data.totalAssetsUsd : data.totalAssetsKrw
   const marketValue = currency === 'USD' ? data.totalMarketValueUsd : data.totalMarketValueKrw
   const principal = currency === 'USD' ? data.principalUsd : data.principalKrw
   const pnl = currency === 'USD' ? data.totalUnrealizedPnlUsd : data.totalUnrealizedPnlKrw
@@ -23,7 +24,8 @@ export function SummaryCards({ data }: Props) {
 
   return (
     <section className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
+        <Card label="총액 (현금+평가액)" value={formatMoney(totalAssets, currency)} />
         <Card label="평가액" value={formatMoney(marketValue, currency)} />
         <Card label="원금" value={formatMoney(principal, currency)} />
         <Card
@@ -67,11 +69,16 @@ function Card({
   valueClass?: string
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+    // min-w-0 로 grid item 이 콘텐츠 너비를 따르지 않고 셀 폭에 맞춰 줄어들도록 허용.
+    // truncate 가 동작하려면 부모 chain 모두 min-w-0 필요.
+    <div className="min-w-0 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
         {label}
       </div>
-      <div className={`mt-1 text-2xl font-semibold tabular-nums ${valueClass ?? ''}`}>
+      <div
+        className={`mt-1 truncate text-xl font-semibold tabular-nums ${valueClass ?? ''}`}
+        title={value}
+      >
         {value}
       </div>
     </div>

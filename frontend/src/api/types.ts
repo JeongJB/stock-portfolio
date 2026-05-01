@@ -37,6 +37,8 @@ export interface PortfolioView {
   totalCostBasisKrw: string
   totalUnrealizedPnlUsd: string
   totalUnrealizedPnlKrw: string
+  totalAssetsUsd: string
+  totalAssetsKrw: string
   usdKrwRate: string
   asOf: string // ISO-8601 with KST offset
   positions: PositionView[]
