@@ -65,7 +65,7 @@ export function AllocationPie({ data }: Props) {
     <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <h3 className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-        <div className="h-72 flex-1">
+        <div className="h-72 w-full lg:flex-1">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
               <Pie
