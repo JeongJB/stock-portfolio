@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { recordTrade } from '../../api/client'
-import type { RecordTradeRequest, TradeType } from '../../api/types'
+import type { PositionView, RecordTradeRequest, TradeType } from '../../api/types'
 import { useToast } from '../../app/toastContext'
+import { formatMoney, formatQty } from '../../app/format'
+import { useOwnedPositions } from './useOwnedPositions'
 
 const TRADE_TYPES: { type: TradeType; label: string }[] = [
   { type: 'BUY', label: '매수' },
@@ -35,6 +37,8 @@ const MEMO_MAX_LENGTH = 200
 // 양의 십진수만 허용. 빈 문자열은 OK(미입력 상태).
 const DECIMAL_RE = /^\d*\.?\d*$/
 
+type BuyMode = 'new' | 'add'
+
 function isAssetTrade(type: TradeType): boolean {
   return type === 'BUY' || type === 'SELL'
 }
@@ -46,9 +50,11 @@ function isDividend(type: TradeType): boolean {
 export function TradeForm() {
   const queryClient = useQueryClient()
   const { showToast } = useToast()
+  const { positions, isLoading: positionsLoading } = useOwnedPositions()
 
   const [type, setType] = useState<TradeType>('BUY')
   const [fields, setFields] = useState<FormFields>(EMPTY_FIELDS)
+  const [buyMode, setBuyMode] = useState<BuyMode>('new')
   const [pastTimeOpen, setPastTimeOpen] = useState(false)
   const [executedAtLocal, setExecutedAtLocal] = useState('') // datetime-local 값
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -81,6 +87,15 @@ export function TradeForm() {
     setType(next)
     // 탭 전환 시 입력값 초기화 — 의미가 다른 폼이므로 잔여값 보존이 오히려 혼동을 유발.
     setFields(EMPTY_FIELDS)
+    setBuyMode('new')
+    setErrorMessage(null)
+  }
+
+  const handleBuyModeChange = (next: BuyMode) => {
+    if (next === buyMode) return
+    setBuyMode(next)
+    // 모드 전환 시 ticker 만 리셋 (qty/price 는 이번 거래 값이라 어차피 비워두는 패턴).
+    setFields((prev) => ({ ...prev, ticker: '' }))
     setErrorMessage(null)
   }
 
@@ -133,6 +148,9 @@ export function TradeForm() {
   }
 
   const isPending = mutation.isPending
+  const selectedPosition = fields.ticker
+    ? positions.find((p) => p.ticker === fields.ticker)
+    : undefined
 
   return (
     <form
@@ -141,16 +159,69 @@ export function TradeForm() {
     >
       <TradeTypeTabs type={type} onChange={handleTypeChange} disabled={isPending} />
 
+      {type === 'BUY' && (
+        <BuyModeRadio mode={buyMode} onChange={handleBuyModeChange} disabled={isPending} />
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
-        {isAssetTrade(type) ? (
+        {type === 'BUY' ? (
           <>
-            <FieldText
-              label="티커"
+            {buyMode === 'new' ? (
+              <FieldText
+                label="티커"
+                value={fields.ticker}
+                onChange={(v) => handleFieldChange('ticker', v)}
+                placeholder="예: AAPL"
+                autoComplete="off"
+                disabled={isPending}
+              />
+            ) : (
+              <FieldPositionSelect
+                label="보유 종목"
+                value={fields.ticker}
+                onChange={(v) => handleFieldChange('ticker', v)}
+                positions={positions}
+                disabled={isPending}
+                loading={positionsLoading}
+                emptyMessage="보유 중인 종목이 없습니다 — 신규 매수로 전환하세요"
+                placeholder="보유 종목 선택"
+                selectedPosition={selectedPosition}
+              />
+            )}
+            <FieldDecimal
+              label="수량"
+              value={fields.qty}
+              onChange={(v) => handleFieldChange('qty', v)}
+              placeholder="0"
+              disabled={isPending}
+            />
+            <FieldDecimal
+              label="단가 (USD)"
+              value={fields.price}
+              onChange={(v) => handleFieldChange('price', v)}
+              placeholder="0.00"
+              disabled={isPending}
+            />
+            <FieldDecimal
+              label="수수료 (USD, 선택)"
+              value={fields.fee}
+              onChange={(v) => handleFieldChange('fee', v)}
+              placeholder="0.00"
+              disabled={isPending}
+            />
+          </>
+        ) : type === 'SELL' ? (
+          <>
+            <FieldPositionSelect
+              label="보유 종목"
               value={fields.ticker}
               onChange={(v) => handleFieldChange('ticker', v)}
-              placeholder="예: AAPL"
-              autoComplete="off"
+              positions={positions}
               disabled={isPending}
+              loading={positionsLoading}
+              emptyMessage="매도 가능한 종목이 없습니다"
+              placeholder="매도할 종목 선택"
+              selectedPosition={selectedPosition}
             />
             <FieldDecimal
               label="수량"
@@ -176,13 +247,16 @@ export function TradeForm() {
           </>
         ) : isDividend(type) ? (
           <>
-            <FieldText
-              label="티커"
+            <FieldPositionSelect
+              label="보유 종목"
               value={fields.ticker}
               onChange={(v) => handleFieldChange('ticker', v)}
-              placeholder="예: AAPL"
-              autoComplete="off"
+              positions={positions}
               disabled={isPending}
+              loading={positionsLoading}
+              emptyMessage="배당 입력 가능한 종목이 없습니다"
+              placeholder="배당 받은 종목 선택"
+              selectedPosition={selectedPosition}
             />
             <FieldDecimal
               label="배당금 (USD, 세후 입금액)"
@@ -286,6 +360,44 @@ function TradeTypeTabs({
   )
 }
 
+function BuyModeRadio({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: BuyMode
+  onChange: (m: BuyMode) => void
+  disabled: boolean
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="매수 모드"
+      className="flex items-center gap-4 text-sm text-slate-700 dark:text-slate-200"
+    >
+      {(
+        [
+          { value: 'new' as BuyMode, label: '신규 매수' },
+          { value: 'add' as BuyMode, label: '추가 매수' },
+        ]
+      ).map(({ value, label }) => (
+        <label key={value} className="inline-flex items-center gap-1.5">
+          <input
+            type="radio"
+            name="buyMode"
+            value={value}
+            checked={mode === value}
+            onChange={() => onChange(value)}
+            disabled={disabled}
+            className="h-4 w-4 accent-slate-900 dark:accent-slate-100"
+          />
+          <span>{label}</span>
+        </label>
+      ))}
+    </div>
+  )
+}
+
 function FieldText({
   label,
   value,
@@ -313,6 +425,60 @@ function FieldText({
         disabled={disabled}
         className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono tabular-nums text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
       />
+    </label>
+  )
+}
+
+function FieldPositionSelect({
+  label,
+  value,
+  onChange,
+  positions,
+  disabled,
+  loading,
+  emptyMessage,
+  placeholder,
+  selectedPosition,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  positions: PositionView[]
+  disabled?: boolean
+  loading?: boolean
+  emptyMessage: string
+  placeholder: string
+  selectedPosition?: PositionView
+}) {
+  const isEmpty = !loading && positions.length === 0
+  const selectDisabled = disabled || loading || isEmpty
+  const placeholderText = loading ? '로딩 중...' : isEmpty ? emptyMessage : placeholder
+
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-slate-600 dark:text-slate-300">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={selectDisabled}
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono tabular-nums text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
+      >
+        <option value="">{placeholderText}</option>
+        {positions.map((p) => (
+          <option key={p.ticker} value={p.ticker}>
+            {p.ticker} · 수량 {formatQty(p.qty)}주 · 평균단가 {formatMoney(p.avgCostUsd, 'USD')}
+          </option>
+        ))}
+      </select>
+      {selectedPosition && (
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          수량 {formatQty(selectedPosition.qty)}주 · 평균단가{' '}
+          {formatMoney(selectedPosition.avgCostUsd, 'USD')}
+        </span>
+      )}
+      {isEmpty && (
+        <span className="text-xs text-slate-500 dark:text-slate-400">{emptyMessage}</span>
+      )}
     </label>
   )
 }

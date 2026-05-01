@@ -79,13 +79,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 단위 | 산출물 |
 | --- | --- |
 | FE-6 거래 내역 표 + memo | `/history` 신규 페이지 + 헤더 메뉴 "거래 내역". `GET /api/trades?limit=200` (최신순, default=200/MAX=1000). 컬럼 7종(시각·종류·종목·수량·단가·금액·비고). 거래 종류별 색상 배지(BUY emerald / SELL rose / DEPOSIT sky / WITHDRAW slate / DIVIDEND violet). 입금·출금 거래에 비고(memo) 입력·표시 추가 — `Trade` 도메인에 `memo: String?` 필드 신설(최대 200자, blank→null 정규화), FE 입력은 DEPOSIT/WITHDRAW 폼에만 노출. 거래 시점 환율 미박제 → 표는 USD 기준만 표시. 편집/삭제·필터·페이지네이션은 미도입. |
+| FE-7 + FE-8 거래 폼 보유 종목 선택 | TradeForm 의 SELL/DIVIDEND 탭은 strict dropdown(보유 종목만), BUY 탭은 radio 토글(신규 매수=자유 입력 / 추가 매수=dropdown). 선택 시 평균단가·수량 힌트. 0개 보유 시 안내 메시지. 데이터는 `GET /api/portfolio` 의 positions[] (react-query 캐시 공유 — 추가 fetch X). 백엔드 변경 없음. |
 
 ### 다음 단계 (재개 시 이 순서)
 
 1. **백엔드 P1 발주** *(현재 발주 후보 없음 — 새 요구사항 발생 시 `planner` 재검토)*.
 2. **P2 후속**:
-   - FE-7 매도 폼 보유 종목 선택 UI — 매도 시 ticker 자유 입력 대신 현재 보유 포지션을 select 드롭다운으로 노출(수량·평균단가 힌트 포함). 오타·미보유 종목 매도 방지.
-   - FE-8 매수 폼 기존 종목 빠른 추가매수 — 신규 매수와 추가 매수가 모두 빈번하므로 ticker 자유 입력은 유지하되, 보유 종목을 한눈에 보여주는 select/자동완성을 같은 폼에서 토글 가능하게 노출. 기존 종목 선택 시 ticker 자동 채움 + 평균단가·수량 힌트로 추가매수 입력 부담 감소(가격·수량은 이번 거래 값이라 비워둠).
    - FE-9 다크모드/접근성/모바일 레이아웃.
    - recharts 청크 분할 등 성능 미세 조정.
    - SnapStart 적용 검토 — 현재 콜드 스타트 5~10초 수용 중. 1인용 빈도엔 체감 거슬리지 않음 → 우선순위 낮음.
