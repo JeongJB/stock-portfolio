@@ -15,6 +15,8 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -297,6 +299,142 @@ class KisMarketDataAdapterTest {
                 .withHeader("appsecret", equalTo("test-secret"))
                 .withHeader("tr_id", equalTo("HHDFS00000300"))
                 .withHeader("custtype", equalTo("P")));
+    }
+
+    private void setKstNow(LocalDateTime kst) {
+        Instant instant = kst.atZone(ZoneId.of("Asia/Seoul")).toInstant();
+        clockHolder.set(Clock.fixed(instant, ZoneOffset.UTC));
+    }
+
+    private void stubEmptyQuote(String exchange) {
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo(exchange))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("""
+                                {
+                                  "rt_cd": "0",
+                                  "msg1": "조회된 데이터가 없습니다",
+                                  "output": { "rsym": "" }
+                                }
+                                """)));
+    }
+
+    @Test
+    void 주간장_시간엔_BAQ_코드로_조회한다() {
+        stubTokenIssue();
+        // KST 12:00 → 주간장 시간대
+        setKstNow(LocalDateTime.of(2026, 4, 28, 12, 0));
+        stubQuote("AAPL", "BAQ", "180.00");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.exchange()).isEqualTo(Exchange.NAS); // 도메인 enum 은 정규장 그대로 노출
+        assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("180.00"));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ"))
+                .withQueryParam("SYMB", equalTo("AAPL")));
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+    }
+
+    @Test
+    void 주간장_빈응답이면_정규장_코드로_fallback() {
+        stubTokenIssue();
+        setKstNow(LocalDateTime.of(2026, 4, 28, 12, 0));
+        // BAQ 는 가격 필드 누락, NAS 는 정상 응답
+        stubEmptyQuote("BAQ");
+        stubQuote("AAPL", "NAS", "175.50");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("175.50"));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+    }
+
+    @Test
+    void 주간장_정규장_둘다_빈응답이면_예외() {
+        stubTokenIssue();
+        setKstNow(LocalDateTime.of(2026, 4, 28, 12, 0));
+        stubEmptyQuote("BAQ");
+        stubEmptyQuote("NAS");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        try {
+            adapter.getQuote("AAPL", Exchange.NAS);
+            org.junit.jupiter.api.Assertions.fail("예외가 발생해야 한다");
+        } catch (RuntimeException ex) {
+            assertThat(ex).isInstanceOf(IllegalStateException.class);
+            assertThat(ex.getMessage()).contains("가격 필드");
+        }
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+    }
+
+    @Test
+    void 주간장_시간_외엔_정규장_코드만_호출() {
+        stubTokenIssue();
+        // KST 18:00 → 주간장 종료 후
+        setKstNow(LocalDateTime.of(2026, 4, 28, 18, 0));
+        stubQuote("AAPL", "NAS", "175.50");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+    }
+
+    @Test
+    void 주간장_시작_경계_10시_정각엔_주간장_코드() {
+        stubTokenIssue();
+        setKstNow(LocalDateTime.of(2026, 4, 28, 10, 0, 0));
+        stubQuote("AAPL", "BAQ", "180.00");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+    }
+
+    @Test
+    void 주간장_종료_경계_17시30분_정각엔_정규장_코드() {
+        stubTokenIssue();
+        setKstNow(LocalDateTime.of(2026, 4, 28, 17, 30, 0));
+        stubQuote("AAPL", "NAS", "175.50");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+    }
+
+    @Test
+    void NYS_종목은_BAY_로_매핑된다() {
+        stubTokenIssue();
+        setKstNow(LocalDateTime.of(2026, 4, 28, 12, 0));
+        stubQuote("GE", "BAY", "150.00");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("GE", Exchange.NYS);
+
+        assertThat(quote.exchange()).isEqualTo(Exchange.NYS);
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAY")));
     }
 
 }

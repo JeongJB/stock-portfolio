@@ -52,6 +52,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | P1-1 종목 META + 거래소 자동 탐색 | `TickerMeta` 도메인 + `TickerMetaRepository` 포트 + `DynamoTickerMetaRepository` 어댑터. `ExchangeResolver` 가 ticker→exchange 결정 (META 없음→NAS/NYS/AMS 탐색, 카운터≥3→재탐색). `PortfolioApplicationService` 의 `DEFAULT_EXCHANGE` 하드코딩 제거 + view() 내 자기치유 (성공 시 카운터 0 리셋, 실패 시 +1). 거래 PUT 시 BUY/SELL 만 GSI1 키(`gsi1pk=TICKER#<sym>`, `gsi1sk=TRADE#<isoTs>`) 박제. `listTradesByTicker` 메서드 추가 (P2 대비). cron 미도입 — view() 안에서 자기치유. |
 | P1-2 시세 캐시 10분 슬롯화 | DynamoQuoteCache SK 를 `QUOTE#yyyyMMddHHmm` (KST 10분 floor) 로 변경, TTL 36h→1h. QuoteCachePort 시그니처 LocalDate→Instant. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. |
 | P1-3 application.yml 전환 | application.properties → yml 변환, properties 삭제. 환경별 분기 쉬워짐. |
+| P1-4 한투 주간장 EXCD 자동 매핑 | KST 10:00~17:30 사이 시세 조회 시 NYS/NAS/AMS 를 BAY/BAQ/BAA 로 자동 변환. 주간장 응답이 비면 정규장 코드로 1회 fallback. 도메인 `Exchange` enum 과 META 에 박힌 거래소는 정규장 코드 그대로 유지 — 매핑은 어댑터 내부에만. |
 
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 

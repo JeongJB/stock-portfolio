@@ -1,6 +1,6 @@
 package com.example.stockportfolio.domain;
 
-// 한투 OpenAPI EXCD 코드를 그대로 사용하여 어댑터 매핑 비용을 0으로 만든다.
+// 한투 OpenAPI 정규장 EXCD 코드와 동일한 이름을 쓴다. 주간장(BAY/BAQ/BAA) 매핑은 KisMarketDataAdapter 내부 책임.
 public enum Exchange {
     NAS,
     NYS,

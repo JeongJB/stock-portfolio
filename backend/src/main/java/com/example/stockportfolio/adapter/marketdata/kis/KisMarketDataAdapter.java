@@ -15,6 +15,8 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,11 @@ public class KisMarketDataAdapter implements MarketDataPort {
     private static final List<String> FX_KEYS = List.of("t_rate");
 
     private static final Duration FX_TTL = Duration.ofHours(1);
+
+    // 미국 주식 주간장 시간(KST 10:00 포함 ~ 17:30 제외) 동안에는 정규장 EXCD 대신 BAY/BAQ/BAA 코드로 조회해야 시세가 잡힌다.
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final LocalTime DAY_SESSION_START = LocalTime.of(10, 0);
+    private static final LocalTime DAY_SESSION_END = LocalTime.of(17, 30);
 
     private final KisHttpClient kisHttpClient;
     private final RestClient fxFallbackClient;
@@ -55,9 +62,23 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     @Override
     public Quote getQuote(String ticker, Exchange exchange) {
+        String regularExcd = exchange.name();
+        if (isDaySessionNow()) {
+            String dayCode = dayExcd(exchange);
+            try {
+                return queryQuote(ticker, exchange, dayCode);
+            } catch (IllegalStateException ex) {
+                log.debug("주간장 코드 {} 미적중 → 정규장 {} 로 fallback (ticker={})", dayCode, regularExcd, ticker);
+                return queryQuote(ticker, exchange, regularExcd);
+            }
+        }
+        return queryQuote(ticker, exchange, regularExcd);
+    }
+
+    private Quote queryQuote(String ticker, Exchange exchange, String excd) {
         Map<String, String> query = new LinkedHashMap<>();
         query.put("AUTH", "");
-        query.put("EXCD", exchange.name());
+        query.put("EXCD", excd);
         query.put("SYMB", ticker);
 
         JsonNode root = kisHttpClient.get("/uapi/overseas-price/v1/quotations/price", "HHDFS00000300", query);
@@ -67,6 +88,19 @@ public class KisMarketDataAdapter implements MarketDataPort {
                         "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다: " + output));
         Instant asOf = clock.instant();
         return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
+    }
+
+    private boolean isDaySessionNow() {
+        LocalTime nowKst = LocalTime.from(clock.instant().atZone(KST));
+        return !nowKst.isBefore(DAY_SESSION_START) && nowKst.isBefore(DAY_SESSION_END);
+    }
+
+    private static String dayExcd(Exchange exchange) {
+        return switch (exchange) {
+            case NAS -> "BAQ";
+            case NYS -> "BAY";
+            case AMS -> "BAA";
+        };
     }
 
     @Override
