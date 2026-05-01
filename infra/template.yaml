@@ -368,9 +368,29 @@ Resources:
         var EXPECTED_HASH = '${BasicAuthHash}';
         var REALM = 'Stock Portfolio';
 
+        // PWA 핵심 자산은 Basic Auth 면제 — Mobile Chrome 의 install 자격
+        // 백그라운드 검사가 저장된 credential 을 일관되게 못 보내 401 받으면
+        // chrome://webapks 에서 사이트가 사라지고 "앱 설치" 가 안 뜬다.
+        // 이 경로들은 본질적으로 공개 메타데이터/공개 코드라 노출돼도 무해.
+        function isPwaAsset(uri) {
+          if (uri === '/manifest.webmanifest') return true;
+          if (uri === '/sw.js') return true;
+          if (uri === '/registerSW.js') return true;
+          if (uri === '/favicon.svg') return true;
+          if (uri.indexOf('/workbox-') === 0) return true;
+          if (uri.indexOf('/pwa-') === 0) return true;
+          return false;
+        }
+
         function handler(event) {
           var request = event.request;
           var headers = request.headers;
+          var uri = request.uri;
+
+          // PWA 자산은 인증 검사 건너뜀 (단, SPA 리라이트도 건너뜀 — 정적 파일이라 그대로).
+          if (isPwaAsset(uri)) {
+            return request;
+          }
 
           var auth = headers.authorization && headers.authorization.value;
           if (!auth) {
@@ -382,7 +402,6 @@ Resources:
           }
 
           // 인증 통과 → 기존 SPA 라우팅 리라이트.
-          var uri = request.uri;
           if (uri.indexOf('/api/') === 0) {
             return request;
           }
