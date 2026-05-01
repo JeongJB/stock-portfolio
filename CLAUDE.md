@@ -64,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | FE-0 공통 인프라 | `api/types.ts`(BigDecimal=string, nullable 명시), `api/client.ts`(`VITE_API_BASE_URL` / `VITE_API_KEY`), USD/KRW 컨텍스트(localStorage 영속·기본 KRW), KST 시각·천 단위 포맷 헬퍼, 자체 토스트 시스템, vite dev proxy(`/api` → `:8080`). |
 | FE-1 대시보드 (`/`) | 평가액·원금·평가손익·IRR·단순 수익률 합계 카드 5장 / 보유 비중 파이 차트(현금 슬라이스 포함, 종목별 퍼센트 legend 우측/모바일은 하단) / 포지션 표(시세 실패 행 회색 음영 + `—`) / 우상단 "이미지로 저장" 버튼 (html-to-image PNG, 검은 배경, 파일명 `portfolio-<KST date>.png`). |
 | FE-2 거래 입력 (`/trades`) | BUY/SELL/DIVIDEND/DEPOSIT/WITHDRAW 5종 탭, 같은 페이지 머무름 + 토스트, 4xx/5xx 응답 본문 그대로 노출, `executedAt` 토글로 과거 시각 입력. (DIVIDEND 는 P1-5 에서 추가) |
-| FE-3 스냅샷 추이 (`/snapshots`) | 평가액·원금 두 라인 차트(USD/KRW 즉시 토글), 호버에 `usdKrwRate` 표시, 박제 시 갱신/저장 분기 토스트, 0건 빈 상태 안내. 기간 선택(1달/3달/6달/1년/5년/사용자 지정, 디폴트 1달, localStorage 영속). |
+| FE-3 스냅샷 추이 (`/snapshots`) | 평가액·원금 두 라인 차트(USD/KRW 즉시 토글), 호버에 `usdKrwRate` 표시, 박제 시 갱신/저장 분기 토스트, 0건 빈 상태 안내. 기간 선택(1달/3달/6달/1년/5년/사용자 지정, 디폴트 1달, localStorage 영속). 차트 위에 기간 평가액 상승률 카드 ((최근 - 가장 오래된)/가장 오래된, 입금·출금 미보정 단순 변화율). |
 
 **프론트엔드 P1-FE — `frontend/` + `infra/`**
 
@@ -85,6 +85,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | FE: 라우트 기반 코드 분할 | `App.tsx` 의 4개 페이지(Dashboard/Trades/Snapshots/History)를 `React.lazy` + `<Suspense>` 로 동적 import. recharts(`CategoricalChart`)는 Dashboard/Snapshots 가 공유하므로 vite/rollup 이 자동으로 별도 shared 청크(~320KB)로 분리. 메인 청크 695KB → 261KB(메인 vendor) + 페이지별 4~51KB, 빌드 경고(`Some chunks are larger than 500 kB`) 해소. PWA precache 총량은 비슷 — 첫 방문 1회 성능 향상 목적. Suspense fallback 은 기존 "로딩 중..." 텍스트와 동일한 패턴. |
 | FE-9 모바일 레이아웃 (다크모드·접근성 제외) | 모바일 375~414px 가정 보강. 표(포지션·거래 내역)는 `overflow-x-auto` 가로 스크롤 + 셀 `whitespace-nowrap`, 거래 내역은 첫 컬럼(시각) `sticky left-0` 으로 행 식별 유지. 헤더 nav 4개는 패딩/텍스트 축소(`text-lg sm:text-2xl`, `gap-x-3`)로 한 행 유지(햄버거 미도입). TradeForm 5탭은 외부 wrapper `overflow-x-auto`, 탭 `whitespace-nowrap`. 입력 필드 `inputMode="decimal"` (기존 유지) + 주요 버튼 `min-h-[44px]` (Apple HIG). `index.html` viewport `viewport-fit=cover`, `body { overflow-x: hidden }` 로 의도치 않은 가로 스크롤 0. 다크모드와 접근성 a11y 보강은 1인용 가치 작아 보류. |
 | FE: in-app 설치 버튼 | 헤더 우측에 PWA 설치 버튼. `useInstallPrompt` 훅이 `beforeinstallprompt` 이벤트를 잡아 저장, 클릭 시 native install dialog. 이미 설치되었거나(`display-mode: standalone`) 이벤트가 발생 안 한 환경(iOS Safari 등)엔 버튼 자동 숨김. Android Chrome 의 자동 prompt 가 환경에 따라 안 뜨는 케이스 보완. |
+| FE: 손익 페이지 | `/pnl` 신규 페이지 + 헤더 메뉴 "손익". PeriodSelector(스냅샷과 동일 6옵션) + 월별/연별 토글. SELL 의 실현 손익 + DIVIDEND 합산을 KST 기준 월/연 단위로 그룹. USD 만 표시. 백엔드는 `TradeView` 에 `realizedPnlUsd` 필드 추가 (SELL 만, 시간순 평균단가 기반 계산). |
 
 ### 다음 단계 (재개 시 이 순서)
 

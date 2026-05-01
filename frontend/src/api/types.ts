@@ -78,6 +78,8 @@ export interface TradeView {
   cashAmount?: string
   // memo 는 DEPOSIT/WITHDRAW 거래에서만 입력 받는다 (UI 1차안). 백엔드 모델은 모든 종류에서 허용.
   memo?: string
+  // SELL 거래만 채워진다. (매도가 - 매도 시점 평균단가) × 수량 - 수수료. 손익 페이지에서 사용.
+  realizedPnlUsd?: string
 }
 
 export interface RecordTradeRequest {

@@ -17,7 +17,7 @@ export interface UseSnapshotPeriodResult {
   range: { from: string; to: string }
 }
 
-const STORAGE_KEY = 'snapshot-period'
+const SNAPSHOT_STORAGE_KEY = 'snapshot-period'
 const VALID_PRESETS: readonly PeriodPreset[] = ['1M', '3M', '6M', '1Y', '5Y', 'CUSTOM']
 
 function defaultState(): PeriodState {
@@ -32,9 +32,9 @@ function isValidIsoDate(s: unknown): s is string {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
 }
 
-function readInitial(): PeriodState {
+function readInitial(storageKey: string): PeriodState {
   if (typeof window === 'undefined') return defaultState()
-  const raw = window.localStorage.getItem(STORAGE_KEY)
+  const raw = window.localStorage.getItem(storageKey)
   if (!raw) return defaultState()
   try {
     const parsed = JSON.parse(raw) as Partial<PeriodState>
@@ -67,12 +67,16 @@ function presetFrom(preset: Exclude<PeriodPreset, 'CUSTOM'>): string {
   }
 }
 
-export function useSnapshotPeriod(): UseSnapshotPeriodResult {
-  const [state, setState] = useState<PeriodState>(readInitial)
+/**
+ * PeriodPreset/PeriodState 를 localStorage 에 영속화하는 공용 훅.
+ * 손익 페이지 등 다른 페이지에서도 동일 구조로 재사용한다 (key 만 다름).
+ */
+export function usePeriodWithStorage(storageKey: string): UseSnapshotPeriodResult {
+  const [state, setState] = useState<PeriodState>(() => readInitial(storageKey))
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-  }, [state])
+    window.localStorage.setItem(storageKey, JSON.stringify(state))
+  }, [state, storageKey])
 
   const setPreset = useCallback((preset: PeriodPreset) => {
     setState((prev) => ({ ...prev, preset }))
@@ -94,4 +98,8 @@ export function useSnapshotPeriod(): UseSnapshotPeriodResult {
   }, [state])
 
   return { state, setPreset, setCustomFrom, setCustomTo, range }
+}
+
+export function useSnapshotPeriod(): UseSnapshotPeriodResult {
+  return usePeriodWithStorage(SNAPSHOT_STORAGE_KEY)
 }

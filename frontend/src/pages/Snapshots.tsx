@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listSnapshots } from '../api/client'
 import type { SnapshotView } from '../api/types'
+import { PeriodReturnCard } from '../components/snapshots/PeriodReturnCard'
 import { PeriodSelector } from '../components/snapshots/PeriodSelector'
 import { SnapshotTrendChart } from '../components/snapshots/SnapshotTrendChart'
 import { TakeSnapshotButton } from '../components/snapshots/TakeSnapshotButton'
@@ -66,7 +67,10 @@ export function Snapshots() {
       {query.isSuccess && snapshots.length === 0 && <SnapshotsEmptyState />}
 
       {query.isSuccess && snapshots.length > 0 && (
-        <SnapshotTrendChart snapshots={snapshots} />
+        <>
+          <PeriodReturnCard snapshots={snapshots} />
+          <SnapshotTrendChart snapshots={snapshots} />
+        </>
       )}
     </section>
   )

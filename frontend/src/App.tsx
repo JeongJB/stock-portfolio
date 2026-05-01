@@ -15,6 +15,7 @@ const Snapshots = lazy(() =>
 const History = lazy(() =>
   import('./pages/History').then((m) => ({ default: m.History })),
 )
+const Pnl = lazy(() => import('./pages/Pnl').then((m) => ({ default: m.Pnl })))
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive
@@ -46,6 +47,9 @@ export default function App() {
             <NavLink to="/history" className={navLinkClass}>
               거래 내역
             </NavLink>
+            <NavLink to="/pnl" className={navLinkClass}>
+              손익
+            </NavLink>
           </nav>
         </div>
         <div className="flex items-center gap-2">
@@ -60,6 +64,7 @@ export default function App() {
             <Route path="/trades" element={<Trades />} />
             <Route path="/snapshots" element={<Snapshots />} />
             <Route path="/history" element={<History />} />
+            <Route path="/pnl" element={<Pnl />} />
           </Routes>
         </Suspense>
       </main>
