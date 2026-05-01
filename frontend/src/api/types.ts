@@ -61,6 +61,8 @@ export interface SnapshotView {
   totalCostBasisKrw: string
   totalUnrealizedPnlUsd: string
   totalUnrealizedPnlKrw: string
+  totalAssetsUsd: string
+  totalAssetsKrw: string
   positions: PositionView[]
 }
 

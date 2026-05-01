@@ -18,13 +18,13 @@ interface Props {
 
 interface ChartPoint {
   date: string
-  marketValue: number
+  totalAssets: number
   principal: number
   usdKrwRate: number
 }
 
-// 평가액 라인은 진한 인디고, 원금 라인은 회색 점선으로 — Q9에 따라 평가액을 시각적으로 강조.
-const MARKET_VALUE_COLOR = '#4f46e5'
+// 총액 라인은 진한 인디고, 원금 라인은 회색 점선으로 — 총액(현금+평가액)을 시각적으로 강조.
+const TOTAL_ASSETS_COLOR = '#4f46e5'
 const PRINCIPAL_COLOR = '#94a3b8'
 
 export function SnapshotTrendChart({ snapshots }: Props) {
@@ -33,8 +33,8 @@ export function SnapshotTrendChart({ snapshots }: Props) {
   // 같은 응답에서 두 통화 모두 오므로 통화 토글 시 재페치 없이 매핑만 새로 한다.
   const points: ChartPoint[] = snapshots.map((s) => ({
     date: s.date,
-    marketValue: Number(
-      currency === 'USD' ? s.totalMarketValueUsd : s.totalMarketValueKrw,
+    totalAssets: Number(
+      currency === 'USD' ? s.totalAssetsUsd : s.totalAssetsKrw,
     ),
     principal: Number(currency === 'USD' ? s.principalUsd : s.principalKrw),
     usdKrwRate: Number(s.usdKrwRate),
@@ -43,7 +43,7 @@ export function SnapshotTrendChart({ snapshots }: Props) {
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <h3 className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">
-        총평가액 vs 원금 추이
+        총액 vs 원금 추이
       </h3>
       <div className="h-80">
         <ResponsiveContainer width="100%" height="100%">
@@ -65,9 +65,9 @@ export function SnapshotTrendChart({ snapshots }: Props) {
             <Legend />
             <Line
               type="monotone"
-              dataKey="marketValue"
-              name={`평가액 (${currency})`}
-              stroke={MARKET_VALUE_COLOR}
+              dataKey="totalAssets"
+              name={`총액 (${currency})`}
+              stroke={TOTAL_ASSETS_COLOR}
               strokeWidth={2}
               dot={{ r: 2 }}
               activeDot={{ r: 5 }}
@@ -117,8 +117,8 @@ function TrendTooltip({
       <div className="mb-1 font-medium text-slate-700 dark:text-slate-200">{label}</div>
       <div className="space-y-0.5 tabular-nums">
         <div>
-          <span className="inline-block h-2 w-2 rounded-sm align-middle" style={{ backgroundColor: MARKET_VALUE_COLOR }} />{' '}
-          평가액: <span className="text-slate-700 dark:text-slate-200">{formatMoney(String(point.marketValue), currency)}</span>
+          <span className="inline-block h-2 w-2 rounded-sm align-middle" style={{ backgroundColor: TOTAL_ASSETS_COLOR }} />{' '}
+          총액: <span className="text-slate-700 dark:text-slate-200">{formatMoney(String(point.totalAssets), currency)}</span>
         </div>
         <div>
           <span className="inline-block h-2 w-2 rounded-sm align-middle" style={{ backgroundColor: PRINCIPAL_COLOR }} />{' '}
