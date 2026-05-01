@@ -82,6 +82,24 @@ public class InMemoryPortfolioRepository implements PortfolioRepository {
     }
 
     @Override
+    public synchronized List<Trade> listTradesByTicker(String ticker, int limit) {
+        List<Trade> filtered = new ArrayList<>();
+        for (Trade t : trades) {
+            if (ticker.equals(t.ticker())
+                    && (t.type() == com.example.stockportfolio.domain.TradeType.BUY
+                            || t.type() == com.example.stockportfolio.domain.TradeType.SELL)) {
+                filtered.add(t);
+            }
+        }
+        filtered.sort(Comparator.comparing(Trade::executedAt).reversed()
+                .thenComparing(Trade::id));
+        if (filtered.size() <= limit) {
+            return Collections.unmodifiableList(filtered);
+        }
+        return Collections.unmodifiableList(filtered.subList(0, limit));
+    }
+
+    @Override
     public synchronized void saveSnapshot(SnapshotView snapshot) {
         snapshots.put(snapshot.date(), snapshot);
     }

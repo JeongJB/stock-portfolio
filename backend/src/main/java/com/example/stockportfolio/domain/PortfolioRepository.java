@@ -23,6 +23,12 @@ public interface PortfolioRepository {
     List<Trade> listRecentTrades(int limit);
 
     /**
+     * 특정 종목의 BUY/SELL 거래만 GSI1 (`gsi1pk = TICKER#&lt;sym&gt;`) 로 최신순 limit 개 반환.
+     * DEPOSIT/WITHDRAW 는 GSI1 키가 없어 자동으로 제외된다. 보유 종목별 거래 이력 화면 등에서 사용.
+     */
+    List<Trade> listTradesByTicker(String ticker, int limit);
+
+    /**
      * 스냅샷을 저장한다. 같은 date(KST yyyy-MM-dd)면 덮어쓴다.
      * SK = SNAPSHOT#&lt;isoDate&gt;.
      */

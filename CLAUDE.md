@@ -45,6 +45,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | P0-4c 스냅샷 | `POST/GET /api/snapshots`(같은 날짜 덮어쓰기, 종목 상세 JSON 박제). |
 | P0-4d 시세 캐시 | `TICKER#<sym>/QUOTE#<KST 날짜>` 36h TTL 데코레이터. |
 
+**백엔드 P1 — `backend/`**
+
+| 단위 | 산출물 |
+| --- | --- |
+| P1-1 종목 META + 거래소 자동 탐색 | `TickerMeta` 도메인 + `TickerMetaRepository` 포트 + `DynamoTickerMetaRepository` 어댑터. `ExchangeResolver` 가 ticker→exchange 결정 (META 없음→NAS/NYS/AMS 탐색, 카운터≥3→재탐색). `PortfolioApplicationService` 의 `DEFAULT_EXCHANGE` 하드코딩 제거 + view() 내 자기치유 (성공 시 카운터 0 리셋, 실패 시 +1). 거래 PUT 시 BUY/SELL 만 GSI1 키(`gsi1pk=TICKER#<sym>`, `gsi1sk=TRADE#<isoTs>`) 박제. `listTradesByTicker` 메서드 추가 (P2 대비). cron 미도입 — view() 안에서 자기치유. |
+
 **프론트엔드 P0-FE — `frontend/`, Vite 7 + React 19 + TS 6 + PWA + Tailwind v4**
 
 | 단위 | 산출물 |
@@ -66,8 +72,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 다음 단계 (재개 시 이 순서)
 
 1. **백엔드 P1 발주** *(`planner` 재검토 후 1~2개 선택)*:
-   - 종목 마스터(`TICKER#<sym>/META`) + GSI1 종목별 거래 조회 — 다거래소(NYSE/NAS/AMS) 자동 탐색·저장 방식. **사용자는 ticker만 입력**하고, 백엔드가 첫 매수 거래 처리 시 NAS → NYS → AMS 순으로 KIS 시세 조회를 시도해 가장 먼저 성공한 거래소를 META에 박제. 이후 시세 조회는 META의 거래소를 그대로 사용해 1콜로 끝낸다. 거래소 탐색 결과는 종목별로 한 번만 결정되므로 비용·지연 영향 미미. (현재 GEV 같은 NYSE 종목이 NAS 고정 조회로 시세 미조회되는 문제를 동시에 해소.)
-   - 거래소 이전 주기 재검증 — 종목이 NYSE↔NASDAQ 등으로 거래소를 이전하는 경우가 있으므로 META의 거래소가 영구히 유효하다고 가정하지 않는다. EOD 스냅샷이나 별도 EventBridge cron(주 1회 등)에서 META 거래소 기준 시세 조회가 N회 연속 실패한 종목만 NAS → NYS → AMS 재탐색 수행 후 META 갱신. 매번 모든 종목을 재탐색하면 호출량이 폭증하므로 "실패 시에만 재탐색"이 핵심.
    - 시세 캐시 주기 단축 — 현재 KST 일자 단위(`CachingMarketDataAdapter.java:44`의 `kstToday` SK)에서 **10분 슬롯 단위**로 변경. SK 를 `QUOTE#<KST yyyy-MM-dd HH:mm>`(분을 10분으로 라운딩) 형태로 바꾸고 DynamoDB `ttl` 도 1~2시간으로 단축. 미국 정규장 동안 종목당 ~39콜/일로 늘지만 1인용 호출 빈도엔 KIS 한도 여유. 장 마감/주말엔 슬롯이 바뀌어도 응답 동일하므로 실질 호출 증가 적음.
    - DIVIDEND / FEE 거래 종류 추가.
    - IRR(내부수익률) 계산.

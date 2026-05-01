@@ -12,6 +12,8 @@ import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Quantity;
 import com.example.stockportfolio.domain.Quote;
+import com.example.stockportfolio.domain.TickerMeta;
+import com.example.stockportfolio.domain.TickerMetaRepository;
 import com.example.stockportfolio.domain.Trade;
 
 import org.junit.jupiter.api.DisplayName;
@@ -26,7 +28,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -51,7 +55,7 @@ class PortfolioApplicationServiceTest {
         StubMarketData market = new StubMarketData(new BigDecimal("1400"));
         market.put("AAPL", "200");
 
-        PortfolioApplicationService service = new PortfolioApplicationService(repo, market, FIXED);
+        PortfolioApplicationService service = newService(repo, market);
         PortfolioView view = service.view();
 
         // 평가액 USD = 200*10 = 2000, 분모 = 2000 + 500 = 2500
@@ -96,7 +100,7 @@ class PortfolioApplicationServiceTest {
         market.put("AAPL", "200");
         market.fail("BAD");
 
-        PortfolioApplicationService service = new PortfolioApplicationService(repo, market, FIXED);
+        PortfolioApplicationService service = newService(repo, market);
         PortfolioView view = service.view();
 
         // 응답은 200 (예외 비전파), 시세 실패 종목은 가격 필드 null
@@ -139,8 +143,7 @@ class PortfolioApplicationServiceTest {
                 Money.of("1000", Currency.USD),
                 Money.zero(Currency.USD)));
 
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1400")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
         PortfolioView view = service.view();
 
         assertEquals(0, BigDecimal.ZERO.compareTo(view.totalMarketValueUsd()));
@@ -155,8 +158,7 @@ class PortfolioApplicationServiceTest {
         FakeRepository repo = new FakeRepository();
         repo.set(new Portfolio());
 
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1400")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
         PortfolioView view = service.view();
 
         assertEquals(0, BigDecimal.ZERO.compareTo(view.cashWeight()));
@@ -177,7 +179,7 @@ class PortfolioApplicationServiceTest {
         StubMarketData market = new StubMarketData(new BigDecimal("1400"));
         market.put("AAPL", "200");
 
-        PortfolioApplicationService service = new PortfolioApplicationService(repo, market, FIXED);
+        PortfolioApplicationService service = newService(repo, market);
         SnapshotView snapshot = service.takeSnapshot();
 
         // 2026-04-28T00:00:00Z = 2026-04-28T09:00+09:00 → KST 오늘 = 2026-04-28
@@ -205,7 +207,7 @@ class PortfolioApplicationServiceTest {
                 Money.zero(Currency.USD)));
         StubMarketData market = new StubMarketData(new BigDecimal("1400"));
 
-        PortfolioApplicationService service = new PortfolioApplicationService(repo, market, FIXED);
+        PortfolioApplicationService service = newService(repo, market);
         service.takeSnapshot();
 
         // 추가 입금으로 view 변경
@@ -225,8 +227,7 @@ class PortfolioApplicationServiceTest {
     void takeSnapshot_emptyPortfolio() {
         FakeRepository repo = new FakeRepository();
         repo.set(new Portfolio());
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1400")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
 
         SnapshotView snapshot = service.takeSnapshot();
 
@@ -246,8 +247,7 @@ class PortfolioApplicationServiceTest {
         repo.snapshots.put(LocalDate.parse("2026-04-28"), stubSnapshot("2026-04-28")); // 오늘 inclusive
         repo.snapshots.put(LocalDate.parse("2026-04-29"), stubSnapshot("2026-04-29")); // 미래(윈도 밖)
 
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1400")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
         List<SnapshotView> result = service.listSnapshots(null, null);
 
         assertEquals(2, result.size());
@@ -262,8 +262,7 @@ class PortfolioApplicationServiceTest {
         repo.snapshots.put(LocalDate.parse("2026-04-20"), stubSnapshot("2026-04-20"));
         repo.snapshots.put(LocalDate.parse("2026-04-28"), stubSnapshot("2026-04-28"));
 
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1400")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
 
         // from만 — to = today (2026-04-28)
         List<SnapshotView> r1 = service.listSnapshots(LocalDate.parse("2026-04-25"), null);
@@ -282,8 +281,7 @@ class PortfolioApplicationServiceTest {
         FakeRepository repo = new FakeRepository();
         repo.set(new Portfolio());
 
-        PortfolioApplicationService service = new PortfolioApplicationService(
-                repo, new StubMarketData(new BigDecimal("1380.5")), FIXED);
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1380.5")));
         PortfolioView view = service.view();
 
         assertEquals(new BigDecimal("1380.5"), view.usdKrwRate());
@@ -310,6 +308,27 @@ class PortfolioApplicationServiceTest {
         return new Portfolio(copy, cash, cumulativeDeposit, cumulativeWithdraw);
     }
 
+    /**
+     * 테스트 공용 팩토리 — 빈 META 저장소를 가진 ExchangeResolver 와 함께 서비스를 조립한다.
+     * META 가 비어 있으면 resolver 가 NAS 부터 탐색하므로 StubMarketData 가 NAS 호출에 응답하면 된다.
+     */
+    private static PortfolioApplicationService newService(FakeRepository repo, MarketDataPort market) {
+        ExchangeResolver resolver = new ExchangeResolver(market, new InMemoryTickerMetaRepository(), FIXED);
+        return new PortfolioApplicationService(repo, market, resolver, FIXED);
+    }
+
+    /** 단순 ConcurrentHashMap 기반 META 저장소. 테스트 격리만 보장하면 충분. */
+    static class InMemoryTickerMetaRepository implements TickerMetaRepository {
+        private final Map<String, TickerMeta> store = new ConcurrentHashMap<>();
+
+        @Override public Optional<TickerMeta> find(String ticker) {
+            return Optional.ofNullable(store.get(ticker));
+        }
+        @Override public void save(TickerMeta meta) {
+            store.put(meta.ticker(), meta);
+        }
+    }
+
     /** repository fake — load만 의미 있고, recordTrade/listRecentTrades는 단순 미사용. */
     static class FakeRepository implements PortfolioRepository {
         private Portfolio current = new Portfolio();
@@ -332,6 +351,9 @@ class PortfolioApplicationServiceTest {
             this.current = updatedState;
         }
         @Override public List<Trade> listRecentTrades(int limit) {
+            return List.of();
+        }
+        @Override public List<Trade> listTradesByTicker(String ticker, int limit) {
             return List.of();
         }
         @Override public void saveSnapshot(SnapshotView snapshot) {

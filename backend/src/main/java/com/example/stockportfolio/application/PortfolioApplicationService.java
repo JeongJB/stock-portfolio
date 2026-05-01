@@ -34,8 +34,6 @@ public class PortfolioApplicationService {
 
     private static final Logger log = LoggerFactory.getLogger(PortfolioApplicationService.class);
 
-    // 종목 마스터(P1) 도입 전이라 보유 종목의 거래소를 알 수 없다. 모두 NAS로 시세 조회.
-    private static final Exchange DEFAULT_EXCHANGE = Exchange.NAS;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     // weight 분모가 0일 때(빈 포트폴리오)도 BigDecimal nominator/denominator 정밀도가 보존되도록 별도 scale 선언.
     private static final int WEIGHT_SCALE = 6;
@@ -44,13 +42,16 @@ public class PortfolioApplicationService {
 
     private final PortfolioRepository repository;
     private final MarketDataPort marketDataPort;
+    private final ExchangeResolver exchangeResolver;
     private final Clock clock;
 
     public PortfolioApplicationService(PortfolioRepository repository,
                                        MarketDataPort marketDataPort,
+                                       ExchangeResolver exchangeResolver,
                                        Clock clock) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.marketDataPort = Objects.requireNonNull(marketDataPort, "marketDataPort");
+        this.exchangeResolver = Objects.requireNonNull(exchangeResolver, "exchangeResolver");
         this.clock = Objects.requireNonNull(clock, "clock");
     }
 
@@ -76,9 +77,12 @@ public class PortfolioApplicationService {
                 .toList();
         for (Position p : sortedPositions) {
             try {
-                Quote quote = marketDataPort.getQuote(p.ticker(), DEFAULT_EXCHANGE);
+                Exchange exchange = exchangeResolver.resolve(p.ticker());
+                Quote quote = marketDataPort.getQuote(p.ticker(), exchange);
                 lastPriceUsdByTicker.put(p.ticker(), quote.price().amount());
+                exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
             } catch (RuntimeException ex) {
+                exchangeResolver.onQuoteFailure(p.ticker());
                 log.warn("시세 조회 실패 ticker={} 무시하고 진행: {}", p.ticker(), ex.toString());
             }
         }

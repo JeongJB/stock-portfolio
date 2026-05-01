@@ -3,9 +3,11 @@ package com.example.stockportfolio.adapter.persistence.dynamodb;
 import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
+import com.example.stockportfolio.domain.Exchange;
 import com.example.stockportfolio.domain.Money;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Quantity;
+import com.example.stockportfolio.domain.TickerMeta;
 import com.example.stockportfolio.domain.Trade;
 import com.example.stockportfolio.domain.TradeType;
 
@@ -34,6 +36,8 @@ final class DynamoAttributes {
 
     static final String PK = "pk";
     static final String SK = "sk";
+    static final String GSI1_PK = "gsi1pk";
+    static final String GSI1_SK = "gsi1sk";
 
     static final String USER_PK = "USER#me";
     static final String TRADE_SK_PREFIX = "TRADE#";
@@ -43,6 +47,7 @@ final class DynamoAttributes {
     static final String SNAPSHOT_SK_PREFIX = "SNAPSHOT#";
     static final String TICKER_PK_PREFIX = "TICKER#";
     static final String QUOTE_SK_PREFIX = "QUOTE#";
+    static final String TICKER_META_SK = "META";
     static final String TTL_ATTR = "ttl";
 
     // positions 직렬화 전용. JSON 컬럼만 다루므로 모듈 추가는 불필요.
@@ -83,7 +88,16 @@ final class DynamoAttributes {
             item.put("cashAmount", n(c.amount()));
             item.put("cashCcy", s(c.currency().name()));
         });
+        // BUY/SELL 만 종목별 거래 조회용 GSI1 키 박제. DEPOSIT/WITHDRAW 는 키 부재 → 인덱스 자동 제외.
+        if (isTickerLinked(trade.type()) && trade.ticker() != null) {
+            item.put(GSI1_PK, s(tickerPk(trade.ticker())));
+            item.put(GSI1_SK, s(tradeSk(trade)));
+        }
         return item;
+    }
+
+    private static boolean isTickerLinked(TradeType type) {
+        return type == TradeType.BUY || type == TradeType.SELL;
     }
 
     static Trade tradeFromItem(Map<String, AttributeValue> item) {
@@ -294,5 +308,29 @@ final class DynamoAttributes {
         Money price = new Money(new BigDecimal(item.get("priceUsd").n()), Currency.USD);
         Instant asOf = Instant.parse(item.get("asOf").s());
         return new com.example.stockportfolio.domain.Quote(ticker, exchange, price, asOf);
+    }
+
+    static String tickerMetaSk() {
+        return TICKER_META_SK;
+    }
+
+    static Map<String, AttributeValue> tickerMetaItem(TickerMeta meta) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(PK, s(tickerPk(meta.ticker())));
+        item.put(SK, s(TICKER_META_SK));
+        item.put("ticker", s(meta.ticker()));
+        item.put("exchange", s(meta.exchange().name()));
+        item.put("lastVerifiedAt", s(meta.lastVerifiedAt().toString()));
+        item.put("consecutiveQuoteFailures",
+                AttributeValue.fromN(Integer.toString(meta.consecutiveQuoteFailures())));
+        return item;
+    }
+
+    static TickerMeta tickerMetaFromItem(Map<String, AttributeValue> item) {
+        String ticker = item.get("ticker").s();
+        Exchange exchange = Exchange.valueOf(item.get("exchange").s());
+        Instant lastVerifiedAt = Instant.parse(item.get("lastVerifiedAt").s());
+        int failures = Integer.parseInt(item.get("consecutiveQuoteFailures").n());
+        return new TickerMeta(ticker, exchange, lastVerifiedAt, failures);
     }
 }

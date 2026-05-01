@@ -26,11 +26,17 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BillingMode;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteTableRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
+import software.amazon.awssdk.services.dynamodb.model.GlobalSecondaryIndex;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
+import software.amazon.awssdk.services.dynamodb.model.Projection;
+import software.amazon.awssdk.services.dynamodb.model.ProjectionType;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
@@ -40,6 +46,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -71,15 +78,25 @@ class DynamoPortfolioRepositoryIT {
 
     @BeforeEach
     void createTable() {
+        // 운영 SAM template 와 동일하게 GSI1 (gsi1pk/gsi1sk) 도 함께 프로비저닝.
         client.createTable(CreateTableRequest.builder()
                 .tableName(TABLE_NAME)
                 .billingMode(BillingMode.PAY_PER_REQUEST)
                 .attributeDefinitions(
                         AttributeDefinition.builder().attributeName("pk").attributeType(ScalarAttributeType.S).build(),
-                        AttributeDefinition.builder().attributeName("sk").attributeType(ScalarAttributeType.S).build())
+                        AttributeDefinition.builder().attributeName("sk").attributeType(ScalarAttributeType.S).build(),
+                        AttributeDefinition.builder().attributeName("gsi1pk").attributeType(ScalarAttributeType.S).build(),
+                        AttributeDefinition.builder().attributeName("gsi1sk").attributeType(ScalarAttributeType.S).build())
                 .keySchema(
                         KeySchemaElement.builder().attributeName("pk").keyType(KeyType.HASH).build(),
                         KeySchemaElement.builder().attributeName("sk").keyType(KeyType.RANGE).build())
+                .globalSecondaryIndexes(GlobalSecondaryIndex.builder()
+                        .indexName("GSI1")
+                        .keySchema(
+                                KeySchemaElement.builder().attributeName("gsi1pk").keyType(KeyType.HASH).build(),
+                                KeySchemaElement.builder().attributeName("gsi1sk").keyType(KeyType.RANGE).build())
+                        .projection(Projection.builder().projectionType(ProjectionType.ALL).build())
+                        .build())
                 .build());
         repository = new DynamoPortfolioRepository(client, TABLE_NAME);
     }
@@ -259,6 +276,100 @@ class DynamoPortfolioRepositoryIT {
                         new BigDecimal("0.800000"),
                         new BigDecimal("1000.0000"),
                         new BigDecimal("1400000.0000"))));
+    }
+
+    @Test
+    void BUY_거래는_GSI1_키가_박제된다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("10000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        Trade buy = Trade.buy(Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", Quantity.of("10"),
+                Money.of("150", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buy);
+        repository.recordTrade(buy, portfolio);
+
+        // base 테이블에서 직접 raw item 조회 → gsi1pk/gsi1sk 가 박혀 있어야 함
+        GetItemResponse response = client.getItem(GetItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "pk", AttributeValue.fromS("USER#me"),
+                        "sk", AttributeValue.fromS("TRADE#" + buy.executedAt() + "#" + buy.id())))
+                .build());
+        Map<String, AttributeValue> item = response.item();
+        assertThat(item).containsKey("gsi1pk");
+        assertThat(item).containsKey("gsi1sk");
+        assertThat(item.get("gsi1pk").s()).isEqualTo("TICKER#AAPL");
+        assertThat(item.get("gsi1sk").s()).isEqualTo("TRADE#" + buy.executedAt() + "#" + buy.id());
+    }
+
+    @Test
+    void DEPOSIT_거래는_GSI1_키가_없다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("1000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        GetItemResponse response = client.getItem(GetItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .key(Map.of(
+                        "pk", AttributeValue.fromS("USER#me"),
+                        "sk", AttributeValue.fromS("TRADE#" + deposit.executedAt() + "#" + deposit.id())))
+                .build());
+        Map<String, AttributeValue> item = response.item();
+        assertThat(item).doesNotContainKey("gsi1pk");
+        assertThat(item).doesNotContainKey("gsi1sk");
+    }
+
+    @Test
+    void listTradesByTicker는_BUY_SELL만_최신순으로_반환한다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("100000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        Trade buyAapl = Trade.buy(Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", Quantity.of("10"),
+                Money.of("150", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buyAapl);
+        repository.recordTrade(buyAapl, portfolio);
+
+        Trade buyMsft = Trade.buy(Instant.parse("2026-01-02T12:00:00Z"),
+                "MSFT", Quantity.of("5"),
+                Money.of("400", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(buyMsft);
+        repository.recordTrade(buyMsft, portfolio);
+
+        Trade sellAapl = Trade.sell(Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", Quantity.of("5"),
+                Money.of("160", Currency.USD), Money.zero(Currency.USD));
+        portfolio.apply(sellAapl);
+        repository.recordTrade(sellAapl, portfolio);
+
+        List<Trade> trades = repository.listTradesByTicker("AAPL", 10);
+
+        assertThat(trades).hasSize(2);
+        // 최신순: SELL(2026-01-03) → BUY(2026-01-02)
+        assertThat(trades.get(0).id()).isEqualTo(sellAapl.id());
+        assertThat(trades.get(1).id()).isEqualTo(buyAapl.id());
+    }
+
+    @Test
+    void listTradesByTicker_DEPOSIT은_제외된다() {
+        Portfolio portfolio = new Portfolio();
+        Trade deposit = Trade.deposit(Instant.parse("2026-01-01T00:00:00Z"),
+                Money.of("1000", Currency.USD));
+        portfolio.apply(deposit);
+        repository.recordTrade(deposit, portfolio);
+
+        // DEPOSIT 만 있을 때 임의 ticker 로 조회 → 빈 결과
+        List<Trade> trades = repository.listTradesByTicker("AAPL", 10);
+        assertThat(trades).isEmpty();
     }
 
     @Test

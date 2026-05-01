@@ -1,6 +1,7 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
 import com.example.stockportfolio.domain.PortfolioRepository;
+import com.example.stockportfolio.domain.TickerMetaRepository;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -42,5 +43,12 @@ public class DynamoDbConfig {
             DynamoDbClient client,
             @Value("${portfolio.table-name:Portfolio}") String tableName) {
         return new DynamoPortfolioRepository(client, tableName);
+    }
+
+    @Bean
+    public TickerMetaRepository tickerMetaRepository(
+            DynamoDbClient client,
+            @Value("${portfolio.table-name:Portfolio}") String tableName) {
+        return new DynamoTickerMetaRepository(client, tableName);
     }
 }

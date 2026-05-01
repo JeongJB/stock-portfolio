@@ -30,6 +30,8 @@ import java.util.Objects;
 import java.util.Set;
 
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.CASH_USD_SK;
+import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.GSI1_PK;
+import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.GSI1_SK;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.META_SK;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.PK;
 import static com.example.stockportfolio.adapter.persistence.dynamodb.DynamoAttributes.POSITION_SK_PREFIX;
@@ -158,6 +160,32 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                 .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
                 .expressionAttributeValues(Map.of(
                         ":pk", AttributeValue.fromS(USER_PK),
+                        ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
+                .scanIndexForward(false)
+                .limit(limit)
+                .build());
+
+        List<Trade> trades = new ArrayList<>(response.items().size());
+        Set<String> seen = new HashSet<>();
+        for (Map<String, AttributeValue> item : response.items()) {
+            Trade t = DynamoAttributes.tradeFromItem(item);
+            if (seen.add(t.id())) {
+                trades.add(t);
+            }
+        }
+        return trades;
+    }
+
+    @Override
+    public List<Trade> listTradesByTicker(String ticker, int limit) {
+        Objects.requireNonNull(ticker, "ticker");
+        QueryResponse response = client.query(QueryRequest.builder()
+                .tableName(tableName)
+                .indexName("GSI1")
+                .keyConditionExpression("#gpk = :gpk AND begins_with(#gsk, :prefix)")
+                .expressionAttributeNames(Map.of("#gpk", GSI1_PK, "#gsk", GSI1_SK))
+                .expressionAttributeValues(Map.of(
+                        ":gpk", AttributeValue.fromS(DynamoAttributes.tickerPk(ticker)),
                         ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
                 .scanIndexForward(false)
                 .limit(limit)

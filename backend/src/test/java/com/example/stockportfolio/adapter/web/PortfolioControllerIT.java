@@ -6,6 +6,8 @@ import com.example.stockportfolio.domain.MarketDataPort;
 import com.example.stockportfolio.domain.Money;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Quote;
+import com.example.stockportfolio.domain.TickerMeta;
+import com.example.stockportfolio.domain.TickerMetaRepository;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -61,6 +63,19 @@ class PortfolioControllerIT {
                     .thenAnswer(inv -> new Quote("AAPL", Exchange.NAS,
                             Money.of("200", Currency.USD), Instant.parse("2026-04-28T00:00:00Z")));
             return mock;
+        }
+
+        @Bean
+        @Primary
+        TickerMetaRepository inMemoryTickerMetaRepository() {
+            // ConcurrentHashMap fake — DynamoDbClient mock 의 null 응답에 의존하지 않도록 격리.
+            java.util.Map<String, TickerMeta> store = new java.util.concurrent.ConcurrentHashMap<>();
+            return new TickerMetaRepository() {
+                @Override public java.util.Optional<TickerMeta> find(String ticker) {
+                    return java.util.Optional.ofNullable(store.get(ticker));
+                }
+                @Override public void save(TickerMeta meta) { store.put(meta.ticker(), meta); }
+            };
         }
     }
 
