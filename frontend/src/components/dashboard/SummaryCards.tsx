@@ -5,6 +5,7 @@ import {
   formatMoney,
   formatRate,
   formatSignedMoney,
+  formatSignedPercent,
   pnlColorClass,
 } from '../../app/format'
 
@@ -22,13 +23,23 @@ export function SummaryCards({ data }: Props) {
 
   return (
     <section className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
         <Card label="평가액" value={formatMoney(marketValue, currency)} />
         <Card label="원금" value={formatMoney(principal, currency)} />
         <Card
           label="평가손익"
           value={formatSignedMoney(pnl, currency)}
           valueClass={pnlColorClass(pnl)}
+        />
+        <Card
+          label="연환산 수익률 (IRR)"
+          value={formatSignedPercent(data.irr)}
+          valueClass={pnlColorClass(data.irr)}
+        />
+        <Card
+          label="단순 수익률"
+          value={formatSignedPercent(data.simpleReturn)}
+          valueClass={pnlColorClass(data.simpleReturn)}
         />
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 dark:text-slate-400">

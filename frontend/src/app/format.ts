@@ -69,6 +69,14 @@ export function formatPercent(value: string | null | undefined): string {
   return PERCENT_FMT.format(n)
 }
 
+// 부호 포함 percent (수익률 카드용). +12.50% / -3.42%, 0 은 부호 없이 0.00%.
+export function formatSignedPercent(value: string | null | undefined): string {
+  const n = toNumber(value)
+  if (Number.isNaN(n)) return '—'
+  const sign = n > 0 ? '+' : n < 0 ? '-' : ''
+  return `${sign}${PERCENT_FMT.format(Math.abs(n))}`
+}
+
 export function formatQty(value: string | null | undefined): string {
   const n = toNumber(value)
   if (Number.isNaN(n)) return '—'

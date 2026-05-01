@@ -40,6 +40,9 @@ export interface PortfolioView {
   usdKrwRate: string
   asOf: string // ISO-8601 with KST offset
   positions: PositionView[]
+  // 거래 부족·수렴 실패·순 원금 ≤ 0 인 경우 null. 비율(0.1250 = 12.50%)로 들어온다.
+  irr: string | null
+  simpleReturn: string | null
 }
 
 export interface SnapshotView {
