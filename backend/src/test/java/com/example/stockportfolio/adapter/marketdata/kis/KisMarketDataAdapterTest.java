@@ -425,6 +425,38 @@ class KisMarketDataAdapterTest {
     }
 
     @Test
+    void 주간장_시간이라도_토요일이면_정규장_코드() {
+        stubTokenIssue();
+        // 2026-05-02 는 토요일, KST 12:00
+        setKstNow(LocalDateTime.of(2026, 5, 2, 12, 0));
+        stubQuote("AAPL", "NAS", "175.50");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+    }
+
+    @Test
+    void 주간장_시간이라도_일요일이면_정규장_코드() {
+        stubTokenIssue();
+        // 2026-05-03 은 일요일, KST 12:00
+        setKstNow(LocalDateTime.of(2026, 5, 3, 12, 0));
+        stubQuote("AAPL", "NAS", "175.50");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        adapter.getQuote("AAPL", Exchange.NAS);
+
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("NAS")));
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo("BAQ")));
+    }
+
+    @Test
     void NYS_종목은_BAY_로_매핑된다() {
         stubTokenIssue();
         setKstNow(LocalDateTime.of(2026, 4, 28, 12, 0));

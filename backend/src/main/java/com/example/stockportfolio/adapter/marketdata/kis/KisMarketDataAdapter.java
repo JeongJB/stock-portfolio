@@ -13,10 +13,12 @@ import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +34,8 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     private static final Duration FX_TTL = Duration.ofHours(1);
 
-    // 미국 주식 주간장 시간(KST 10:00 포함 ~ 17:30 제외) 동안에는 정규장 EXCD 대신 BAY/BAQ/BAA 코드로 조회해야 시세가 잡힌다.
+    // 미국 주식 주간장 시간(평일 KST 10:00 포함 ~ 17:30 제외) 동안에는 정규장 EXCD 대신 BAY/BAQ/BAA 코드로 조회해야 시세가 잡힌다.
+    // 토/일은 한국 주간장이 열리지 않아 시간대와 무관하게 정규장 EXCD 로 직접 조회한다.
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final LocalTime DAY_SESSION_START = LocalTime.of(10, 0);
     private static final LocalTime DAY_SESSION_END = LocalTime.of(17, 30);
@@ -92,8 +95,14 @@ public class KisMarketDataAdapter implements MarketDataPort {
     }
 
     private boolean isDaySessionNow() {
-        LocalTime nowKst = LocalTime.from(clock.instant().atZone(KST));
-        return !nowKst.isBefore(DAY_SESSION_START) && nowKst.isBefore(DAY_SESSION_END);
+        ZonedDateTime nowKst = clock.instant().atZone(KST);
+        DayOfWeek dow = nowKst.getDayOfWeek();
+        // 토/일은 미국 정규장 직전 한국 주간장 자체가 열리지 않으므로 BAY/BAQ/BAA 매핑이 의미 없다.
+        if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) {
+            return false;
+        }
+        LocalTime nowTime = nowKst.toLocalTime();
+        return !nowTime.isBefore(DAY_SESSION_START) && nowTime.isBefore(DAY_SESSION_END);
     }
 
     private static String dayExcd(Exchange exchange) {
