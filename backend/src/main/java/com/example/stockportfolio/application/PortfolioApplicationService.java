@@ -36,6 +36,10 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 public class PortfolioApplicationService {
@@ -47,11 +51,15 @@ public class PortfolioApplicationService {
     private static final int WEIGHT_SCALE = 6;
     // 스냅샷 GET 기본 윈도: 최근 90일.
     private static final int DEFAULT_SNAPSHOT_DAYS = 90;
+    // view() 의 종목별 시세 조회 병렬화용 풀. 1인용 종목 수와 KIS 동시 호출 한도를 고려해 보수적으로 8.
+    // Lambda 단일 인스턴스 재사용 가정으로 1회 생성 후 재사용 (shutdown 훅 미설치 — 컨테이너 종료에 맡김).
+    private static final int QUOTE_FETCH_POOL_SIZE = 8;
 
     private final PortfolioRepository repository;
     private final MarketDataPort marketDataPort;
     private final ExchangeResolver exchangeResolver;
     private final Clock clock;
+    private final ExecutorService quoteFetchExecutor;
 
     public PortfolioApplicationService(PortfolioRepository repository,
                                        MarketDataPort marketDataPort,
@@ -61,6 +69,11 @@ public class PortfolioApplicationService {
         this.marketDataPort = Objects.requireNonNull(marketDataPort, "marketDataPort");
         this.exchangeResolver = Objects.requireNonNull(exchangeResolver, "exchangeResolver");
         this.clock = Objects.requireNonNull(clock, "clock");
+        this.quoteFetchExecutor = Executors.newFixedThreadPool(QUOTE_FETCH_POOL_SIZE, r -> {
+            Thread t = new Thread(r, "quote-fetch");
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     public Trade recordTrade(RecordTradeCommand command) {
@@ -292,23 +305,27 @@ public class PortfolioApplicationService {
             dividendsByTicker.merge(ticker, amount.amount(), BigDecimal::add);
         }
 
-        // 1단계: 시세 조회 (실패 격리). ticker 사전순으로 응답 안정성을 보장한다.
-        Map<String, BigDecimal> lastPriceUsdByTicker = new LinkedHashMap<>();
+        // 1단계: 시세 조회 (실패 격리). 종목별 KIS 호출을 병렬화 — 콜드 스타트 페널티가 종목 수만큼 누적되는 것을 막는다.
+        // 응답 안정성(positionViews 순서) 은 다음 빌드 루프의 sortedPositions 순회로 보장된다.
         List<Position> sortedPositions = portfolio.positions().entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(Map.Entry::getValue)
                 .toList();
-        for (Position p : sortedPositions) {
-            try {
-                Exchange exchange = exchangeResolver.resolve(p.ticker());
-                Quote quote = marketDataPort.getQuote(p.ticker(), exchange);
-                lastPriceUsdByTicker.put(p.ticker(), quote.price().amount());
-                exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
-            } catch (RuntimeException ex) {
-                exchangeResolver.onQuoteFailure(p.ticker());
-                log.warn("시세 조회 실패 ticker={} 무시하고 진행: {}", p.ticker(), ex.toString());
-            }
-        }
+        Map<String, BigDecimal> lastPriceUsdByTicker = new ConcurrentHashMap<>();
+        CompletableFuture<?>[] quoteFutures = sortedPositions.stream()
+                .map(p -> CompletableFuture.runAsync(() -> {
+                    try {
+                        Exchange exchange = exchangeResolver.resolve(p.ticker());
+                        Quote quote = marketDataPort.getQuote(p.ticker(), exchange);
+                        lastPriceUsdByTicker.put(p.ticker(), quote.price().amount());
+                        exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
+                    } catch (RuntimeException ex) {
+                        exchangeResolver.onQuoteFailure(p.ticker());
+                        log.warn("시세 조회 실패 ticker={} 무시하고 진행: {}", p.ticker(), ex.toString());
+                    }
+                }, quoteFetchExecutor))
+                .toArray(CompletableFuture<?>[]::new);
+        CompletableFuture.allOf(quoteFutures).join();
 
         // 2단계: 시세 가용 종목들의 평가액 합. 분모 = 평가액 합 + 현금.
         BigDecimal cashUsd = portfolio.cashUsd().amount();
