@@ -58,6 +58,11 @@ export function SnapshotTrendChart({ snapshots }: Props) {
               tick={{ fontSize: 11 }}
               tickFormatter={(v: number) => compactNumber(v, currency)}
               width={72}
+              domain={[
+                (dataMin: number) => dataMin * 0.97,
+                (dataMax: number) => dataMax * 1.03,
+              ]}
+              allowDecimals={false}
             />
             <Tooltip
               content={<TrendTooltip currency={currency} />}
