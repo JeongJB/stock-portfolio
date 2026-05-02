@@ -86,7 +86,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | FE-9 모바일 레이아웃 (다크모드·접근성 제외) | 모바일 375~414px 가정 보강. 표(포지션·거래 내역)는 `overflow-x-auto` 가로 스크롤 + 셀 `whitespace-nowrap`, 거래 내역은 첫 컬럼(시각) `sticky left-0` 으로 행 식별 유지. 헤더 nav 4개는 패딩/텍스트 축소(`text-lg sm:text-2xl`, `gap-x-3`)로 한 행 유지(햄버거 미도입). TradeForm 5탭은 외부 wrapper `overflow-x-auto`, 탭 `whitespace-nowrap`. 입력 필드 `inputMode="decimal"` (기존 유지) + 주요 버튼 `min-h-[44px]` (Apple HIG). `index.html` viewport `viewport-fit=cover`, `body { overflow-x: hidden }` 로 의도치 않은 가로 스크롤 0. 다크모드와 접근성 a11y 보강은 1인용 가치 작아 보류. |
 | FE: in-app 설치 버튼 | 헤더 우측에 PWA 설치 버튼. `useInstallPrompt` 훅이 `beforeinstallprompt` 이벤트를 잡아 저장, 클릭 시 native install dialog. 이미 설치되었거나(`display-mode: standalone`) 이벤트가 발생 안 한 환경(iOS Safari 등)엔 버튼 자동 숨김. Android Chrome 의 자동 prompt 가 환경에 따라 안 뜨는 케이스 보완. |
 | FE: 손익 페이지 | `/pnl` 신규 페이지 + 헤더 메뉴 "손익". PeriodSelector(스냅샷과 동일 6옵션) + 월별/연별 토글. SELL 의 실현 손익 + DIVIDEND 합산을 KST 기준 월/연 단위로 그룹. USD 만 표시. 백엔드는 `TradeView` 에 `realizedPnlUsd` 필드 추가 (SELL 만, 시간순 평균단가 기반 계산). |
-
+ 
 ### 다음 단계 (재개 시 이 순서)
 
 1. **백엔드 P1 발주** *(현재 발주 후보 없음 — 새 요구사항 발생 시 `planner` 재검토)*.
