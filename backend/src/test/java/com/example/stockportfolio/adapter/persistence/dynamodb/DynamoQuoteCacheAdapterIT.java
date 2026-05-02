@@ -28,6 +28,7 @@ import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
@@ -214,5 +215,49 @@ class DynamoQuoteCacheAdapterIT {
     void 빈_캐시에서_find하면_빈_Optional() {
         Optional<Quote> found = adapter.find("UNKNOWN", Exchange.NAS, FIXED_NOW);
         assertThat(found).isEmpty();
+    }
+
+    @Test
+    void 신규_보조필드_왕복_저장_복원() {
+        Quote q = new Quote("AAPL", Exchange.NAS,
+                new Money(new BigDecimal("175.50"), Currency.USD),
+                Instant.parse("2026-05-01T04:23:00Z"),
+                new BigDecimal("1.23"),
+                new BigDecimal("199.00"),
+                new BigDecimal("120.00"));
+        adapter.put(q, FIXED_NOW);
+
+        Optional<Quote> found = adapter.find("AAPL", Exchange.NAS, FIXED_NOW);
+
+        assertThat(found).isPresent();
+        assertThat(found.get().dailyChangePct()).isEqualByComparingTo("1.23");
+        assertThat(found.get().weekHigh52()).isEqualByComparingTo("199.00");
+        assertThat(found.get().weekLow52()).isEqualByComparingTo("120.00");
+    }
+
+    @Test
+    void 기존_attribute만_있는_ROW도_읽힌다_보조필드는_null() {
+        // 보조 필드 attribute 가 부재한 ROW 를 직접 put — 신구 호환 시나리오 재현.
+        client.putItem(PutItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .item(Map.of(
+                        "pk", AttributeValue.fromS("TICKER#AAPL"),
+                        "sk", AttributeValue.fromS(EXPECTED_SLOT_SK),
+                        "ticker", AttributeValue.fromS("AAPL"),
+                        "exchange", AttributeValue.fromS("NAS"),
+                        "priceUsd", AttributeValue.fromN("175.50"),
+                        "asOf", AttributeValue.fromS("2026-05-01T04:23:00Z"),
+                        "ttl", AttributeValue.fromN(Long.toString(
+                                FIXED_NOW.plus(Duration.ofHours(1)).getEpochSecond()))))
+                .build());
+
+        Optional<Quote> found = adapter.find("AAPL", Exchange.NAS, FIXED_NOW);
+
+        assertThat(found).isPresent();
+        assertThat(found.get().price().amount()).isEqualByComparingTo("175.50");
+        // 신규 보조 필드는 모두 null
+        assertThat(found.get().dailyChangePct()).isNull();
+        assertThat(found.get().weekHigh52()).isNull();
+        assertThat(found.get().weekLow52()).isNull();
     }
 }

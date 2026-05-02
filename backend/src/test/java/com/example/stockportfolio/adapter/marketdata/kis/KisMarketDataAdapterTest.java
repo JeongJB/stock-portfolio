@@ -456,6 +456,152 @@ class KisMarketDataAdapterTest {
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
+    /**
+     * 등락률·52주 고저용 자유 응답 스텁. body 를 직접 받아 테스트마다 필드 조합을 자유롭게 구성.
+     */
+    private void stubQuoteRaw(String ticker, String exchange, String body) {
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+                .withQueryParam("EXCD", equalTo(exchange))
+                .withQueryParam("SYMB", equalTo(ticker))
+                .willReturn(aResponse()
+                        .withStatus(200)
+                        .withHeader("Content-Type", "application/json")
+                        .withBody(body)));
+    }
+
+    @Test
+    void 등락률_rate와_sign_2면_양수() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50","base":"170.00","rate":"3.24","sign":"2"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.dailyChangePct()).isEqualByComparingTo(new BigDecimal("3.24"));
+    }
+
+    @Test
+    void 등락률_rate와_sign_5면_음수() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"165.00","base":"170.00","rate":"2.94","sign":"5"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.dailyChangePct()).isEqualByComparingTo(new BigDecimal("-2.94"));
+    }
+
+    @Test
+    void 등락률_rate와_sign_3이면_0() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"170.00","base":"170.00","rate":"0","sign":"3"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.dailyChangePct()).isEqualByComparingTo(BigDecimal.ZERO);
+    }
+
+    @Test
+    void 등락률_rate만_있고_sign_누락이면_raw_그대로() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"165.00","base":"170.00","rate":"-2.94"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.dailyChangePct()).isEqualByComparingTo(new BigDecimal("-2.94"));
+    }
+
+    @Test
+    void 등락률_rate_sign_없고_last_base만_있으면_폴백계산() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50","base":"170.00"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        // (175.50 - 170.00) / 170.00 * 100 = 3.235.. → HALF_UP 2자리 = 3.24
+        assertThat(quote.dailyChangePct()).isEqualByComparingTo(new BigDecimal("3.24"));
+    }
+
+    @Test
+    void 등락률_rate_sign_base_모두_없으면_null() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.dailyChangePct()).isNull();
+    }
+
+    @Test
+    void 주간_고저_둘다_정상이면_그대로_노출() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50","h52p":"199.00","l52p":"120.00"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.weekHigh52()).isEqualByComparingTo(new BigDecimal("199.00"));
+        assertThat(quote.weekLow52()).isEqualByComparingTo(new BigDecimal("120.00"));
+    }
+
+    @Test
+    void 주간_고저_한쪽만_있으면_둘다_null() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50","h52p":"199.00"
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        assertThat(quote.weekHigh52()).isNull();
+        assertThat(quote.weekLow52()).isNull();
+    }
+
+    @Test
+    void 보조필드_빈문자열은_null로_정규화_단_가격은_정상() {
+        stubTokenIssue();
+        stubQuoteRaw("AAPL", "NAS", """
+                {"rt_cd":"0","output":{
+                  "last":"175.50","base":"","rate":"","sign":"","h52p":"","l52p":""
+                }}""");
+        KisMarketDataAdapter adapter = newAdapter();
+
+        Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
+
+        // 가격은 정상, 보조 필드는 모두 null — 빈 문자열·결측은 시세 자체를 실패시키지 않음
+        assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("175.50"));
+        assertThat(quote.dailyChangePct()).isNull();
+        assertThat(quote.weekHigh52()).isNull();
+        assertThat(quote.weekLow52()).isNull();
+    }
+
     @Test
     void NYS_종목은_BAY_로_매핑된다() {
         stubTokenIssue();

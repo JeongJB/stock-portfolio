@@ -49,6 +49,8 @@ public class PortfolioApplicationService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     // weight 분모가 0일 때(빈 포트폴리오)도 BigDecimal nominator/denominator 정밀도가 보존되도록 별도 scale 선언.
     private static final int WEIGHT_SCALE = 6;
+    // 52주 위치 비율은 0~1 범위, 소수점 4자리 (1bp 단위) 로 충분한 시각화 정밀도.
+    private static final int WEEK_RANGE_RATIO_SCALE = 4;
     // 스냅샷 GET 기본 윈도: 최근 90일.
     private static final int DEFAULT_SNAPSHOT_DAYS = 90;
     // view() 의 종목별 시세 조회 병렬화용 풀. 1인용 종목 수와 KIS 동시 호출 한도를 고려해 보수적으로 8.
@@ -311,13 +313,14 @@ public class PortfolioApplicationService {
                 .sorted(Map.Entry.comparingByKey())
                 .map(Map.Entry::getValue)
                 .toList();
-        Map<String, BigDecimal> lastPriceUsdByTicker = new ConcurrentHashMap<>();
+        // Quote 자체를 보관해 가격 외 보조 필드(등락률·52주 고저) 까지 PositionView 로 그대로 전파한다.
+        Map<String, Quote> quoteByTicker = new ConcurrentHashMap<>();
         CompletableFuture<?>[] quoteFutures = sortedPositions.stream()
                 .map(p -> CompletableFuture.runAsync(() -> {
                     try {
                         Exchange exchange = exchangeResolver.resolve(p.ticker());
                         Quote quote = marketDataPort.getQuote(p.ticker(), exchange);
-                        lastPriceUsdByTicker.put(p.ticker(), quote.price().amount());
+                        quoteByTicker.put(p.ticker(), quote);
                         exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
                     } catch (RuntimeException ex) {
                         exchangeResolver.onQuoteFailure(p.ticker());
@@ -331,11 +334,11 @@ public class PortfolioApplicationService {
         BigDecimal cashUsd = portfolio.cashUsd().amount();
         BigDecimal totalMarketValueUsd = BigDecimal.ZERO;
         for (Position p : sortedPositions) {
-            BigDecimal price = lastPriceUsdByTicker.get(p.ticker());
-            if (price == null) {
+            Quote q = quoteByTicker.get(p.ticker());
+            if (q == null) {
                 continue;
             }
-            totalMarketValueUsd = totalMarketValueUsd.add(price.multiply(p.qty().value()));
+            totalMarketValueUsd = totalMarketValueUsd.add(q.price().amount().multiply(p.qty().value()));
         }
         BigDecimal denominator = totalMarketValueUsd.add(cashUsd);
 
@@ -352,14 +355,19 @@ public class PortfolioApplicationService {
             BigDecimal costBasisUsd = avgCostUsd.multiply(qty);
             totalCostBasisUsd = totalCostBasisUsd.add(costBasisUsd);
 
-            BigDecimal lastPriceUsd = lastPriceUsdByTicker.get(p.ticker());
+            Quote quote = quoteByTicker.get(p.ticker());
+            BigDecimal lastPriceUsd = quote == null ? null : quote.price().amount();
             BigDecimal lastPriceKrw = null;
             BigDecimal marketValueUsd = null;
             BigDecimal marketValueKrw = null;
             BigDecimal weight = null;
             BigDecimal unrealizedPnlUsd = null;
             BigDecimal unrealizedPnlKrw = null;
-            if (lastPriceUsd != null) {
+            BigDecimal dailyChangePct = null;
+            BigDecimal weekHigh52Usd = null;
+            BigDecimal weekLow52Usd = null;
+            BigDecimal weekRangeRatio = null;
+            if (quote != null) {
                 lastPriceKrw = toKrw(lastPriceUsd, usdKrwRate);
                 marketValueUsd = scaleMoney(lastPriceUsd.multiply(qty));
                 marketValueKrw = toKrw(marketValueUsd, usdKrwRate);
@@ -368,6 +376,11 @@ public class PortfolioApplicationService {
                 unrealizedPnlUsd = scaleMoney(marketValueUsd.subtract(costBasisUsd).add(tickerDividend));
                 unrealizedPnlKrw = toKrw(unrealizedPnlUsd, usdKrwRate);
                 totalUnrealizedPnlUsd = totalUnrealizedPnlUsd.add(unrealizedPnlUsd);
+
+                dailyChangePct = quote.dailyChangePct();
+                weekHigh52Usd = quote.weekHigh52();
+                weekLow52Usd = quote.weekLow52();
+                weekRangeRatio = computeWeekRangeRatio(lastPriceUsd, weekHigh52Usd, weekLow52Usd);
             }
 
             positionViews.add(new PositionView(
@@ -382,13 +395,17 @@ public class PortfolioApplicationService {
                     marketValueKrw,
                     weight,
                     unrealizedPnlUsd,
-                    unrealizedPnlKrw));
+                    unrealizedPnlKrw,
+                    dailyChangePct,
+                    weekHigh52Usd,
+                    weekLow52Usd,
+                    weekRangeRatio));
         }
 
         // 시세 실패 종목 + 미보유 종목의 누적배당도 전체 손익 합계에는 포함한다.
         // 시세 가용 종목은 위 루프에서 이미 unrealizedPnlUsd 에 포함됐으므로 여기서는 제외.
         for (Map.Entry<String, BigDecimal> e : dividendsByTicker.entrySet()) {
-            if (lastPriceUsdByTicker.containsKey(e.getKey())) continue;
+            if (quoteByTicker.containsKey(e.getKey())) continue;
             totalUnrealizedPnlUsd = totalUnrealizedPnlUsd.add(e.getValue());
         }
 
@@ -563,5 +580,27 @@ public class PortfolioApplicationService {
             return BigDecimal.ZERO.setScale(WEIGHT_SCALE, RoundingMode.HALF_UP);
         }
         return numerator.divide(denominator, WEIGHT_SCALE, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * 52주 위치 비율 = (last - low) / (high - low). 0~1 로 clamp (현재가가 범위 밖이어도 마커가 트랙 안에 머물도록).
+     * high == low 이거나 둘 중 하나가 null 이면 비율 계산이 무의미 → null.
+     */
+    private static BigDecimal computeWeekRangeRatio(BigDecimal last, BigDecimal high, BigDecimal low) {
+        if (last == null || high == null || low == null) {
+            return null;
+        }
+        BigDecimal range = high.subtract(low);
+        if (range.signum() <= 0) {
+            return null;
+        }
+        BigDecimal ratio = last.subtract(low).divide(range, WEEK_RANGE_RATIO_SCALE, RoundingMode.HALF_UP);
+        if (ratio.signum() < 0) {
+            return BigDecimal.ZERO.setScale(WEEK_RANGE_RATIO_SCALE);
+        }
+        if (ratio.compareTo(BigDecimal.ONE) > 0) {
+            return BigDecimal.ONE.setScale(WEEK_RANGE_RATIO_SCALE);
+        }
+        return ratio;
     }
 }

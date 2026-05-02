@@ -450,6 +450,110 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("PositionView: Quote 의 등락률·52주 고저가 그대로 전파되고 weekRangeRatio 가 계산된다")
+    void view_propagatesAuxQuoteFieldsAndComputesRangeRatio() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.of("0", Currency.USD),
+                Money.of("1000", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        // last=160, low=120, high=200 → ratio = (160-120)/(200-120) = 40/80 = 0.5
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.putWithAux("AAPL", "160", "1.50", "200.00", "120.00");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        PositionView aapl = view.positions().get(0);
+        assertEquals(0, aapl.dailyChangePct().compareTo(new BigDecimal("1.50")));
+        assertEquals(0, aapl.weekHigh52Usd().compareTo(new BigDecimal("200.00")));
+        assertEquals(0, aapl.weekLow52Usd().compareTo(new BigDecimal("120.00")));
+        assertEquals(0, aapl.weekRangeRatio().compareTo(new BigDecimal("0.5000")));
+    }
+
+    @Test
+    @DisplayName("weekRangeRatio: 52주 고저 동일가면 null (0 분모 방어)")
+    void view_weekRangeRatioNullWhenHighEqualsLow() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.of("0", Currency.USD),
+                Money.of("1000", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.putWithAux("AAPL", "150", "0.00", "150.00", "150.00");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        PositionView aapl = view.positions().get(0);
+        // 고저가 동일 → 비율 의미 없음
+        assertNull(aapl.weekRangeRatio());
+        // 가격 자체는 그대로 노출
+        assertEquals(0, aapl.weekHigh52Usd().compareTo(new BigDecimal("150.00")));
+    }
+
+    @Test
+    @DisplayName("weekRangeRatio: 현재가가 범위 밖이면 [0,1] 로 clamp")
+    void view_weekRangeRatioClampedToZeroOne() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(
+                Map.of("AAPL", new Position("AAPL",
+                        Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD)),
+                       "MSFT", new Position("MSFT",
+                        Quantity.of("5"), Money.of("100", Currency.USD), Money.zero(Currency.USD))),
+                Money.of("0", Currency.USD),
+                Money.of("1500", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        // AAPL: 현재가 100 < 저점 120 → ratio < 0 → clamp 0
+        market.putWithAux("AAPL", "100", "0.00", "200.00", "120.00");
+        // MSFT: 현재가 250 > 고점 200 → ratio > 1 → clamp 1
+        market.putWithAux("MSFT", "250", "0.00", "200.00", "120.00");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        PositionView aapl = view.positions().stream()
+                .filter(p -> p.ticker().equals("AAPL")).findFirst().orElseThrow();
+        PositionView msft = view.positions().stream()
+                .filter(p -> p.ticker().equals("MSFT")).findFirst().orElseThrow();
+
+        assertEquals(0, aapl.weekRangeRatio().compareTo(new BigDecimal("0.0000")));
+        assertEquals(0, msft.weekRangeRatio().compareTo(new BigDecimal("1.0000")));
+    }
+
+    @Test
+    @DisplayName("PositionView: 시세 실패 종목은 보조 필드(등락률·52주 고저·ratio) 모두 null")
+    void view_quoteFailedTickerHasNullAuxFields() {
+        Map<String, Position> positions = new HashMap<>();
+        positions.put("BAD", new Position("BAD",
+                Quantity.of("5"), Money.of("50", Currency.USD), Money.zero(Currency.USD)));
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(positions,
+                Money.of("100", Currency.USD),
+                Money.of("100", Currency.USD),
+                Money.zero(Currency.USD)));
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.fail("BAD");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        PositionView bad = view.positions().get(0);
+        assertNull(bad.dailyChangePct());
+        assertNull(bad.weekHigh52Usd());
+        assertNull(bad.weekLow52Usd());
+        assertNull(bad.weekRangeRatio());
+    }
+
+    @Test
     @DisplayName("응답 메타: usdKrwRate와 KST 오프셋 asOf가 채워진다")
     void view_includesRateAndKstAsOf() {
         FakeRepository repo = new FakeRepository();
@@ -981,6 +1085,7 @@ class PortfolioApplicationServiceTest {
     private static class StubMarketData implements MarketDataPort {
         private final BigDecimal rate;
         private final Map<String, BigDecimal> prices = new HashMap<>();
+        private final Map<String, BigDecimal[]> auxByTicker = new HashMap<>();
         private final java.util.Set<String> failing = new java.util.HashSet<>();
 
         StubMarketData(BigDecimal rate) {
@@ -989,6 +1094,16 @@ class PortfolioApplicationServiceTest {
 
         void put(String ticker, String price) {
             prices.put(ticker, new BigDecimal(price));
+        }
+
+        /** 등락률·52주 고저까지 등록 (null 허용). */
+        void putWithAux(String ticker, String price, String dailyChangePct, String weekHigh52, String weekLow52) {
+            prices.put(ticker, new BigDecimal(price));
+            auxByTicker.put(ticker, new BigDecimal[] {
+                    dailyChangePct == null ? null : new BigDecimal(dailyChangePct),
+                    weekHigh52 == null ? null : new BigDecimal(weekHigh52),
+                    weekLow52 == null ? null : new BigDecimal(weekLow52)
+            });
         }
 
         void fail(String ticker) {
@@ -1004,7 +1119,12 @@ class PortfolioApplicationServiceTest {
             if (price == null) {
                 throw new IllegalStateException("미등록 ticker: " + ticker);
             }
-            return new Quote(ticker, exchange, Money.of(price, Currency.USD), Instant.EPOCH);
+            BigDecimal[] aux = auxByTicker.get(ticker);
+            if (aux == null) {
+                return new Quote(ticker, exchange, Money.of(price, Currency.USD), Instant.EPOCH);
+            }
+            return new Quote(ticker, exchange, Money.of(price, Currency.USD), Instant.EPOCH,
+                    aux[0], aux[1], aux[2]);
         }
 
         @Override

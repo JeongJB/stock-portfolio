@@ -7,6 +7,7 @@ import {
   formatSignedMoney,
   pnlColorClass,
 } from '../../app/format'
+import { WeekRangeBar } from './WeekRangeBar'
 
 interface Props {
   positions: PositionView[]
@@ -43,6 +44,8 @@ export function PositionsTable({ positions }: Props) {
             <Th>수량</Th>
             <Th>평단 ({unit})</Th>
             <Th>현재가 ({unit})</Th>
+            <Th>당일</Th>
+            <Th>52주 위치</Th>
             <Th>평가액 ({unit})</Th>
             <Th>비중</Th>
             <Th>평가손익 ({unit})</Th>
@@ -92,6 +95,17 @@ function Row({
       <Td>{formatQty(position.qty)}</Td>
       <Td>{formatMoney(avgCost, currency)}</Td>
       <Td>{quoteFailed ? '—' : formatMoney(lastPrice, currency)}</Td>
+      <Td className={changePctColorClass(position.dailyChangePct)}>
+        {formatChangePct(position.dailyChangePct)}
+      </Td>
+      <Td className="min-w-[140px]">
+        <WeekRangeBar
+          low={position.weekLow52Usd}
+          high={position.weekHigh52Usd}
+          current={position.lastPriceUsd}
+          ratio={position.weekRangeRatio}
+        />
+      </Td>
       <Td>{quoteFailed ? '—' : formatMoney(marketValue, currency)}</Td>
       <Td>{quoteFailed ? '—' : formatPercent(position.weight)}</Td>
       <Td className={quoteFailed ? '' : pnlColorClass(pnl)}>
@@ -99,6 +113,31 @@ function Row({
       </Td>
     </tr>
   )
+}
+
+/**
+ * 등락률 표시: "+1.23%" / "-4.56%" / "0.00%" / "—".
+ * 이미 % 단위로 들어오므로 (예: "1.23" = 1.23%) Intl.NumberFormat percent 미적용.
+ */
+function formatChangePct(value: string | null | undefined): string {
+  if (value == null || value === '') return '—'
+  const n = Number(value)
+  if (Number.isNaN(n)) return '—'
+  const sign = n > 0 ? '+' : n < 0 ? '-' : ''
+  return `${sign}${Math.abs(n).toFixed(2)}%`
+}
+
+/**
+ * 등락률 색상: |값| >= 0.005 (≈ ±0.01% 반올림 임계) → 초록/빨강, 그 외 회색.
+ * 보합(0)·null·미세값은 정보 손실 없이 회색으로 보합 표시.
+ */
+function changePctColorClass(value: string | null | undefined): string {
+  if (value == null || value === '') return 'text-slate-500 dark:text-slate-400'
+  const n = Number(value)
+  if (Number.isNaN(n)) return 'text-slate-500 dark:text-slate-400'
+  if (n >= 0.005) return 'text-emerald-600 dark:text-emerald-400'
+  if (n <= -0.005) return 'text-rose-600 dark:text-rose-400'
+  return 'text-slate-500 dark:text-slate-400'
 }
 
 function Th({

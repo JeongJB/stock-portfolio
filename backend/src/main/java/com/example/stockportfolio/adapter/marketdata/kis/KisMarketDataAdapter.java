@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.Duration;
@@ -31,6 +32,14 @@ public class KisMarketDataAdapter implements MarketDataPort {
     // 한투 응답 명세가 공식 문서에 일관되게 노출되지 않아 후보 키를 우선순위대로 시도한다.
     private static final List<String> PRICE_KEYS = List.of("last");
     private static final List<String> FX_KEYS = List.of("t_rate");
+    // 등락률·52주 고저는 단일 키만 사용 (HHDFS00000300 명세).
+    private static final String RATE_KEY = "rate";
+    private static final String SIGN_KEY = "sign";
+    private static final String BASE_KEY = "base";
+    private static final String WEEK_HIGH_KEY = "h52p";
+    private static final String WEEK_LOW_KEY = "l52p";
+
+    private static final int RATE_SCALE = 2;
 
     private static final Duration FX_TTL = Duration.ofHours(1);
 
@@ -90,8 +99,109 @@ public class KisMarketDataAdapter implements MarketDataPort {
                 .orElseThrow(() -> new IllegalStateException(
                         "KIS 시세 응답에서 가격 필드(" + PRICE_KEYS + ")를 찾을 수 없습니다 (output 키: "
                                 + output.propertyNames() + ")"));
+        // 보조 필드(등락률·52주 고저) 는 누락돼도 시세 자체는 가용으로 간주한다.
+        BigDecimal dailyChangePct = readDailyChangePct(output, price);
+        BigDecimal[] weekRange = readWeekRange(output);
         Instant asOf = clock.instant();
-        return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
+        return new Quote(
+                ticker,
+                exchange,
+                Money.of(price, Currency.USD),
+                asOf,
+                dailyChangePct,
+                weekRange[0],
+                weekRange[1]);
+    }
+
+    /**
+     * 등락률 추출. 우선순위:
+     * 1) rate + sign 둘 다 → sign 으로 부호 결정 (+/0/−)
+     * 2) rate 만 → raw 그대로 (이미 부호 포함이라 가정)
+     * 3) last + base → (last - base) / base * 100, HALF_UP 2자리
+     * 4) 그 외 → null
+     */
+    private static BigDecimal readDailyChangePct(JsonNode output, BigDecimal lastPrice) {
+        java.util.Optional<BigDecimal> rate = readNonZeroOrSignedDecimal(output, RATE_KEY);
+        java.util.Optional<String> sign = readString(output, SIGN_KEY);
+        if (rate.isPresent() && sign.isPresent()) {
+            return signedRate(rate.get(), sign.get());
+        }
+        if (rate.isPresent()) {
+            return rate.get().setScale(RATE_SCALE, RoundingMode.HALF_UP);
+        }
+        java.util.Optional<BigDecimal> base = readDecimal(output, List.of(BASE_KEY));
+        if (base.isPresent() && base.get().signum() > 0 && lastPrice != null) {
+            BigDecimal diff = lastPrice.subtract(base.get());
+            return diff.divide(base.get(), 10, RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal("100"))
+                    .setScale(RATE_SCALE, RoundingMode.HALF_UP);
+        }
+        return null;
+    }
+
+    /**
+     * sign 코드를 등락률에 적용. KIS 명세:
+     * 1=상한, 2=상승 → 양수
+     * 3=보합 → 0
+     * 4=하한, 5=하락 → 음수
+     * 그 외 알 수 없는 값은 raw rate 그대로 (안전한 fallback).
+     */
+    private static BigDecimal signedRate(BigDecimal rate, String sign) {
+        BigDecimal abs = rate.abs().setScale(RATE_SCALE, RoundingMode.HALF_UP);
+        return switch (sign) {
+            case "1", "2" -> abs;
+            case "3" -> BigDecimal.ZERO.setScale(RATE_SCALE);
+            case "4", "5" -> abs.negate();
+            default -> rate.setScale(RATE_SCALE, RoundingMode.HALF_UP);
+        };
+    }
+
+    /**
+     * 52주 고저는 한 쌍 단위로만 의미. 둘 중 하나라도 누락/비정상이면 둘 다 null.
+     * 반환은 [high, low] 순.
+     */
+    private static BigDecimal[] readWeekRange(JsonNode output) {
+        BigDecimal high = readDecimal(output, List.of(WEEK_HIGH_KEY)).orElse(null);
+        BigDecimal low = readDecimal(output, List.of(WEEK_LOW_KEY)).orElse(null);
+        if (high == null || low == null) {
+            return new BigDecimal[] { null, null };
+        }
+        return new BigDecimal[] { high, low };
+    }
+
+    /**
+     * 등락률용 readDecimal 변형: 빈 문자열·공백·"0" 단독은 null 정규화.
+     * (KIS 가 결측을 빈 문자열 또는 "0" 으로 내려주는 케이스 방어 — 단순 readDecimal 은 "0" 도 유효한
+     * 값이라 보합과 결측을 구분 못한다. 여기서는 raw "0" 을 보합으로 받지 않고 null 처리해
+     * sign 이 함께 있을 때만 0 (보합) 으로 확정한다. sign 이 없는 단독 "0" 은 정보 부족으로 폴백 진행.)
+     */
+    private static java.util.Optional<BigDecimal> readNonZeroOrSignedDecimal(JsonNode output, String key) {
+        if (!output.has(key)) {
+            return java.util.Optional.empty();
+        }
+        String raw = output.get(key).asString();
+        if (raw == null || raw.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        String trimmed = raw.trim();
+        try {
+            BigDecimal value = new BigDecimal(trimmed);
+            // 결측 가드성 "0" 은 sign 가 함께 와야만 보합으로 확정 — 호출부에서 sign 매칭으로 처리.
+            return java.util.Optional.of(value);
+        } catch (NumberFormatException ignore) {
+            return java.util.Optional.empty();
+        }
+    }
+
+    private static java.util.Optional<String> readString(JsonNode output, String key) {
+        if (!output.has(key)) {
+            return java.util.Optional.empty();
+        }
+        String raw = output.get(key).asString();
+        if (raw == null || raw.isBlank()) {
+            return java.util.Optional.empty();
+        }
+        return java.util.Optional.of(raw.trim());
     }
 
     private boolean isDaySessionNow() {

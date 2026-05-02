@@ -21,6 +21,13 @@ export interface PositionView {
   weight: string | null
   unrealizedPnlUsd: string | null
   unrealizedPnlKrw: string | null
+  // 시세는 잡혔지만 KIS 응답에 보조 필드가 누락된 경우도 가능 → 시세 가용 여부와 별도로 nullable.
+  // dailyChangePct: % 단위 (예: "1.23" = +1.23%, "-4.56" = -4.56%)
+  // weekRangeRatio: 0~1 (예: "0.6234")
+  dailyChangePct: string | null
+  weekHigh52Usd: string | null
+  weekLow52Usd: string | null
+  weekRangeRatio: string | null
 }
 
 export interface PortfolioView {

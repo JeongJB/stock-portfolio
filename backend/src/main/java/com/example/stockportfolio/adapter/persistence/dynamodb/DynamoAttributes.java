@@ -326,6 +326,16 @@ final class DynamoAttributes {
         item.put("exchange", s(quote.exchange().name()));
         item.put("priceUsd", n(quote.price().amount()));
         item.put("asOf", s(quote.asOf().toString()));
+        // 등락률·52주 고저는 어댑터에서 누락 가능 → null 인 attribute 는 박제 X (DDB 는 미부재 attribute 자동 처리).
+        if (quote.dailyChangePct() != null) {
+            item.put("dailyChangePct", n(quote.dailyChangePct()));
+        }
+        if (quote.weekHigh52() != null) {
+            item.put("weekHigh52", n(quote.weekHigh52()));
+        }
+        if (quote.weekLow52() != null) {
+            item.put("weekLow52", n(quote.weekLow52()));
+        }
         item.put(TTL_ATTR, AttributeValue.fromN(Long.toString(ttlEpochSecond)));
         return item;
     }
@@ -336,7 +346,15 @@ final class DynamoAttributes {
                 com.example.stockportfolio.domain.Exchange.valueOf(item.get("exchange").s());
         Money price = new Money(new BigDecimal(item.get("priceUsd").n()), Currency.USD);
         Instant asOf = Instant.parse(item.get("asOf").s());
-        return new com.example.stockportfolio.domain.Quote(ticker, exchange, price, asOf);
+        // 신구 호환: 기존 ROW 에 새 attribute 부재 시 null 매핑 — 다음 슬롯 갱신 시 자연 보강.
+        BigDecimal dailyChangePct = item.containsKey("dailyChangePct")
+                ? new BigDecimal(item.get("dailyChangePct").n()) : null;
+        BigDecimal weekHigh52 = item.containsKey("weekHigh52")
+                ? new BigDecimal(item.get("weekHigh52").n()) : null;
+        BigDecimal weekLow52 = item.containsKey("weekLow52")
+                ? new BigDecimal(item.get("weekLow52").n()) : null;
+        return new com.example.stockportfolio.domain.Quote(
+                ticker, exchange, price, asOf, dailyChangePct, weekHigh52, weekLow52);
     }
 
     static String tickerMetaSk() {
