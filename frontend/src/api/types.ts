@@ -52,6 +52,12 @@ export interface PortfolioView {
   // 거래 부족·수렴 실패·순 원금 ≤ 0 인 경우 null. 비율(0.1250 = 12.50%)로 들어온다.
   irr: string | null
   simpleReturn: string | null
+  // 시세 기준 시각 = 종목별 Quote.asOf 의 최솟값. ISO Z. 시세 0개일 때 null.
+  quoteAsOf: string | null
+  // 시세 성공 종목 수.
+  quoteCount: number
+  // 보유 종목 수 (시세 실패 포함).
+  positionsCount: number
 }
 
 export interface SnapshotView {

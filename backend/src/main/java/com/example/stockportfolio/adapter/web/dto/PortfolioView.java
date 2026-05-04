@@ -4,6 +4,7 @@ import tools.jackson.databind.annotation.JsonSerialize;
 import tools.jackson.databind.ser.std.ToStringSerializer;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -36,6 +37,13 @@ public record PortfolioView(
         OffsetDateTime asOf,
         List<PositionView> positions,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal irr,
-        @JsonSerialize(using = ToStringSerializer.class) BigDecimal simpleReturn
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal simpleReturn,
+        // 시세 기준 시각 = 종목별 Quote.asOf 의 최솟값 (가장 오래된 슬롯). 시세 0개일 때 null.
+        // 직렬화는 ISO Z (Jackson 기본 Instant 직렬화 — application 설정의 WRITE_DATES_AS_TIMESTAMPS=false 와 동일).
+        Instant quoteAsOf,
+        // 시세 성공 종목 수 (실패 종목은 제외).
+        int quoteCount,
+        // 보유 종목 수 (시세 실패 포함). 프론트가 "M/N 종목" 표기에 사용.
+        int positionsCount
 ) {
 }

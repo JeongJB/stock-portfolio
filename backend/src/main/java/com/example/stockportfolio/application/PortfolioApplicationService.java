@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -330,6 +331,14 @@ public class PortfolioApplicationService {
                 .toArray(CompletableFuture<?>[]::new);
         CompletableFuture.allOf(quoteFutures).join();
 
+        // 시세 기준 시각 = 종목별 Quote.asOf 의 최솟값. 시세 0개일 때 null.
+        // 가장 오래된 슬롯을 노출해야 사용자가 "가장 stale 한 데이터" 기준을 본다.
+        Instant quoteAsOf = quoteByTicker.values().stream()
+                .map(Quote::asOf)
+                .filter(Objects::nonNull)
+                .min(Comparator.naturalOrder())
+                .orElse(null);
+
         // 2단계: 시세 가용 종목들의 평가액 합. 분모 = 평가액 합 + 현금.
         BigDecimal cashUsd = portfolio.cashUsd().amount();
         BigDecimal totalMarketValueUsd = BigDecimal.ZERO;
@@ -439,7 +448,10 @@ public class PortfolioApplicationService {
                 asOf,
                 positionViews,
                 irr,
-                simpleReturn);
+                simpleReturn,
+                quoteAsOf,
+                quoteByTicker.size(),
+                sortedPositions.size());
     }
 
     /**

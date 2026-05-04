@@ -554,6 +554,112 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
+    @DisplayName("quoteAsOf: 시세 3개 성공 + asOf 다름 → 가장 오래된 슬롯이 노출되고, count 가 일치")
+    void view_quoteAsOf_minOfSuccessfulQuotes() {
+        Map<String, Position> positions = new HashMap<>();
+        positions.put("AAPL", new Position("AAPL",
+                Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD)));
+        positions.put("MSFT", new Position("MSFT",
+                Quantity.of("5"), Money.of("100", Currency.USD), Money.zero(Currency.USD)));
+        positions.put("GOOG", new Position("GOOG",
+                Quantity.of("3"), Money.of("100", Currency.USD), Money.zero(Currency.USD)));
+
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(positions,
+                Money.of("0", Currency.USD),
+                Money.of("1800", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        market.put("MSFT", "200");
+        market.put("GOOG", "200");
+        Instant oldest = Instant.parse("2026-04-28T13:20:00Z");
+        Instant middle = Instant.parse("2026-04-28T13:30:00Z");
+        Instant newest = Instant.parse("2026-04-28T13:40:00Z");
+        market.putAsOf("AAPL", middle);
+        market.putAsOf("MSFT", oldest);
+        market.putAsOf("GOOG", newest);
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        assertEquals(oldest, view.quoteAsOf(), "가장 오래된 시세 슬롯이 노출돼야 한다");
+        assertEquals(3, view.quoteCount());
+        assertEquals(3, view.positionsCount());
+    }
+
+    @Test
+    @DisplayName("quoteAsOf: 시세 1개 실패 → quoteCount < positionsCount")
+    void view_quoteAsOf_partialFailure() {
+        Map<String, Position> positions = new HashMap<>();
+        positions.put("AAPL", new Position("AAPL",
+                Quantity.of("10"), Money.of("100", Currency.USD), Money.zero(Currency.USD)));
+        positions.put("BAD", new Position("BAD",
+                Quantity.of("5"), Money.of("50", Currency.USD), Money.zero(Currency.USD)));
+
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(positions,
+                Money.of("100", Currency.USD),
+                Money.of("100", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        market.putAsOf("AAPL", Instant.parse("2026-04-28T13:30:00Z"));
+        market.fail("BAD");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        assertEquals(Instant.parse("2026-04-28T13:30:00Z"), view.quoteAsOf());
+        assertEquals(1, view.quoteCount());
+        assertEquals(2, view.positionsCount());
+        assertTrue(view.quoteCount() < view.positionsCount());
+    }
+
+    @Test
+    @DisplayName("quoteAsOf: 모든 시세 실패 → quoteAsOf == null, quoteCount == 0, positionsCount == 보유 수")
+    void view_quoteAsOf_allFailures() {
+        Map<String, Position> positions = new HashMap<>();
+        positions.put("BAD1", new Position("BAD1",
+                Quantity.of("5"), Money.of("50", Currency.USD), Money.zero(Currency.USD)));
+        positions.put("BAD2", new Position("BAD2",
+                Quantity.of("3"), Money.of("70", Currency.USD), Money.zero(Currency.USD)));
+
+        FakeRepository repo = new FakeRepository();
+        repo.set(buildPortfolio(positions,
+                Money.of("100", Currency.USD),
+                Money.of("100", Currency.USD),
+                Money.zero(Currency.USD)));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.fail("BAD1");
+        market.fail("BAD2");
+
+        PortfolioApplicationService service = newService(repo, market);
+        PortfolioView view = service.view();
+
+        assertNull(view.quoteAsOf(), "시세 0개면 quoteAsOf 는 null");
+        assertEquals(0, view.quoteCount());
+        assertEquals(2, view.positionsCount());
+    }
+
+    @Test
+    @DisplayName("quoteAsOf: 보유 0종목 → quoteAsOf == null, quoteCount == 0, positionsCount == 0")
+    void view_quoteAsOf_emptyPortfolio() {
+        FakeRepository repo = new FakeRepository();
+        repo.set(new Portfolio());
+
+        PortfolioApplicationService service = newService(repo, new StubMarketData(new BigDecimal("1400")));
+        PortfolioView view = service.view();
+
+        assertNull(view.quoteAsOf());
+        assertEquals(0, view.quoteCount());
+        assertEquals(0, view.positionsCount());
+    }
+
+    @Test
     @DisplayName("응답 메타: usdKrwRate와 KST 오프셋 asOf가 채워진다")
     void view_includesRateAndKstAsOf() {
         FakeRepository repo = new FakeRepository();
@@ -1086,6 +1192,7 @@ class PortfolioApplicationServiceTest {
         private final BigDecimal rate;
         private final Map<String, BigDecimal> prices = new HashMap<>();
         private final Map<String, BigDecimal[]> auxByTicker = new HashMap<>();
+        private final Map<String, Instant> asOfByTicker = new HashMap<>();
         private final java.util.Set<String> failing = new java.util.HashSet<>();
 
         StubMarketData(BigDecimal rate) {
@@ -1106,6 +1213,11 @@ class PortfolioApplicationServiceTest {
             });
         }
 
+        /** 종목별 시세 기준 시각을 명시. 미등록 시 Instant.EPOCH 폴백. */
+        void putAsOf(String ticker, Instant asOf) {
+            asOfByTicker.put(ticker, asOf);
+        }
+
         void fail(String ticker) {
             failing.add(ticker);
         }
@@ -1119,11 +1231,12 @@ class PortfolioApplicationServiceTest {
             if (price == null) {
                 throw new IllegalStateException("미등록 ticker: " + ticker);
             }
+            Instant asOf = asOfByTicker.getOrDefault(ticker, Instant.EPOCH);
             BigDecimal[] aux = auxByTicker.get(ticker);
             if (aux == null) {
-                return new Quote(ticker, exchange, Money.of(price, Currency.USD), Instant.EPOCH);
+                return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf);
             }
-            return new Quote(ticker, exchange, Money.of(price, Currency.USD), Instant.EPOCH,
+            return new Quote(ticker, exchange, Money.of(price, Currency.USD), asOf,
                     aux[0], aux[1], aux[2]);
         }
 

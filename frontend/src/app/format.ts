@@ -130,3 +130,26 @@ export function yearsAgoKst(n: number): string {
   d.setFullYear(d.getFullYear() - n)
   return formatKstDate(d)
 }
+
+/**
+ * 주어진 ISO 시각이 현재 시점 기준 몇 분 전인지 한국어로 표기.
+ *  - 60초 미만: "방금"
+ *  - 60분 미만: "N분 전"
+ *  - 60분 이상: "N시간 전" (소수점 버림)
+ * 미래 시각이거나 음수 차이면 "방금" 으로 처리(시계 동기화 오차 방어).
+ * 인자가 null/빈 문자열/파싱 실패면 "—".
+ */
+export function formatRelativeMinutes(
+  asOfIso: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!asOfIso) return '—'
+  const ts = Date.parse(asOfIso)
+  if (Number.isNaN(ts)) return '—'
+  const diffMs = now.getTime() - ts
+  if (diffMs < 60_000) return '방금'
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 60) return `${minutes}분 전`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}시간 전`
+}
