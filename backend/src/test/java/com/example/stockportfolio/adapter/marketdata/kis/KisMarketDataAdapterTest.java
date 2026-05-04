@@ -102,7 +102,7 @@ class KisMarketDataAdapterTest {
     }
 
     private void stubQuote(String ticker, String exchange, String last) {
-        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo(exchange))
                 .withQueryParam("SYMB", equalTo(ticker))
                 .willReturn(aResponse()
@@ -182,7 +182,7 @@ class KisMarketDataAdapterTest {
         assertThat(quote.price().currency()).isEqualTo(Currency.USD);
         assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("175.50"));
         wireMock.verify(1, postRequestedFor(urlEqualTo("/oauth2/tokenP")));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price")));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail")));
     }
 
     @Test
@@ -196,7 +196,7 @@ class KisMarketDataAdapterTest {
         adapter.getQuote("MSFT", Exchange.NAS);
 
         wireMock.verify(1, postRequestedFor(urlEqualTo("/oauth2/tokenP")));
-        wireMock.verify(2, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price")));
+        wireMock.verify(2, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail")));
     }
 
     @Test
@@ -265,7 +265,7 @@ class KisMarketDataAdapterTest {
     @Test
     void 시세_조회_가격필드_없으면_명확히_실패() {
         stubTokenIssue();
-        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
@@ -294,11 +294,11 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withHeader("authorization", equalTo("Bearer ACCESS-1"))
                 .withHeader("appkey", equalTo("test-key"))
                 .withHeader("appsecret", equalTo("test-secret"))
-                .withHeader("tr_id", equalTo("HHDFS00000300"))
+                .withHeader("tr_id", equalTo("HHDFS76200200"))
                 .withHeader("custtype", equalTo("P")));
     }
 
@@ -308,7 +308,7 @@ class KisMarketDataAdapterTest {
     }
 
     private void stubEmptyQuote(String exchange) {
-        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo(exchange))
                 .willReturn(aResponse()
                         .withStatus(200)
@@ -334,10 +334,10 @@ class KisMarketDataAdapterTest {
 
         assertThat(quote.exchange()).isEqualTo(Exchange.NAS); // 도메인 enum 은 정규장 그대로 노출
         assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("180.00"));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ"))
                 .withQueryParam("SYMB", equalTo("AAPL")));
-        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
     }
 
@@ -353,9 +353,9 @@ class KisMarketDataAdapterTest {
         Quote quote = adapter.getQuote("AAPL", Exchange.NAS);
 
         assertThat(quote.price().amount()).isEqualByComparingTo(new BigDecimal("175.50"));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
     }
 
@@ -374,9 +374,9 @@ class KisMarketDataAdapterTest {
             assertThat(ex).isInstanceOf(IllegalStateException.class);
             assertThat(ex.getMessage()).contains("가격 필드");
         }
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
     }
 
@@ -390,9 +390,9 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
-        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
@@ -405,7 +405,7 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
@@ -418,9 +418,9 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
-        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
@@ -434,9 +434,9 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
-        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
@@ -450,9 +450,9 @@ class KisMarketDataAdapterTest {
 
         adapter.getQuote("AAPL", Exchange.NAS);
 
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("NAS")));
-        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(0, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAQ")));
     }
 
@@ -460,7 +460,7 @@ class KisMarketDataAdapterTest {
      * 등락률·52주 고저용 자유 응답 스텁. body 를 직접 받아 테스트마다 필드 조합을 자유롭게 구성.
      */
     private void stubQuoteRaw(String ticker, String exchange, String body) {
-        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.stubFor(get(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo(exchange))
                 .withQueryParam("SYMB", equalTo(ticker))
                 .willReturn(aResponse()
@@ -612,7 +612,7 @@ class KisMarketDataAdapterTest {
         Quote quote = adapter.getQuote("GE", Exchange.NYS);
 
         assertThat(quote.exchange()).isEqualTo(Exchange.NYS);
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price"))
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail"))
                 .withQueryParam("EXCD", equalTo("BAY")));
     }
 

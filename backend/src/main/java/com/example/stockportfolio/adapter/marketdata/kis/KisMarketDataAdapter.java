@@ -32,7 +32,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
     // 한투 응답 명세가 공식 문서에 일관되게 노출되지 않아 후보 키를 우선순위대로 시도한다.
     private static final List<String> PRICE_KEYS = List.of("last");
     private static final List<String> FX_KEYS = List.of("t_rate");
-    // 등락률·52주 고저는 단일 키만 사용 (HHDFS00000300 명세).
+    // 등락률·52주 고저는 단일 키만 사용 (HHDFS76200200 명세).
     private static final String RATE_KEY = "rate";
     private static final String SIGN_KEY = "sign";
     private static final String BASE_KEY = "base";
@@ -93,7 +93,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
         query.put("EXCD", excd);
         query.put("SYMB", ticker);
 
-        JsonNode root = kisHttpClient.get("/uapi/overseas-price/v1/quotations/price", "HHDFS00000300", query);
+        JsonNode root = kisHttpClient.get("/uapi/overseas-price/v1/quotations/price-detail", "HHDFS76200200", query);
         JsonNode output = output(root);
         BigDecimal price = readDecimal(output, PRICE_KEYS)
                 .orElseThrow(() -> new IllegalStateException(
