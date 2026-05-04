@@ -52,3 +52,5 @@ yarn-error.log*
 .aws-sam/
 infra/.aws-sam/
 infra/samconfig.local.toml
+
+.idea
