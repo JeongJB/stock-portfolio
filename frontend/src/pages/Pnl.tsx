@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { listTrades } from '../api/client'
-import type { TradeView } from '../api/types'
+import { getPortfolio, listTrades } from '../api/client'
+import type { Currency, TradeView } from '../api/types'
+import { useCurrency } from '../app/currencyContext'
+import { formatRate } from '../app/format'
 import { PeriodSelector } from '../components/snapshots/PeriodSelector'
 import { PnlTable } from '../components/pnl/PnlTable'
 import type { PnlRow } from '../components/pnl/PnlTable'
@@ -27,25 +29,37 @@ const KST_GROUP_FMT_YEAR = new Intl.DateTimeFormat('en-CA', {
 export function Pnl() {
   const { state, setPreset, setCustomFrom, setCustomTo, range } = usePnlPeriod()
   const { unit, setUnit } = usePnlUnit()
+  const { currency } = useCurrency()
 
   // 거래 내역 페이지와 limit 가 다르므로 캐시 키를 분리한다 (200 vs 1000).
-  const query = useQuery({
+  const tradesQuery = useQuery({
     queryKey: ['trades-pnl', TRADES_LIMIT],
     queryFn: () => listTrades(TRADES_LIMIT),
   })
+  // Dashboard 와 동일 키 — react-query 가 캐시를 공유해 추가 호출이 발생하지 않는다.
+  // KRW 환산용 환율 1개만 필요해 select 로 잘라 리렌더 비용도 최소화.
+  const portfolioQuery = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: getPortfolio,
+    select: (v) => v.usdKrwRate,
+  })
+
+  const usdKrwRate = portfolioQuery.data ?? null
+  const rateNum = usdKrwRate == null ? null : Number(usdKrwRate)
+  const rateValid = rateNum != null && Number.isFinite(rateNum) && rateNum > 0
 
   const rows = useMemo<PnlRow[]>(() => {
-    if (!query.data) return []
-    return groupTrades(query.data, range.from, range.to, unit)
-  }, [query.data, range.from, range.to, unit])
+    if (!tradesQuery.data) return []
+    return groupTrades(tradesQuery.data, range.from, range.to, unit, currency, usdKrwRate)
+  }, [tradesQuery.data, range.from, range.to, unit, currency, usdKrwRate])
 
   return (
     <section className="space-y-4">
       <div className="space-y-1">
         <h2 className="text-xl font-medium">손익</h2>
         <p className="text-sm text-slate-600 dark:text-slate-300">
-          기간 내 매도 실현 손익과 배당을 월별/연별로 집계합니다. USD 기준으로만
-          표시됩니다 (거래 시점 환율을 박제하지 않음).
+          기간 내 매도 실현 손익과 배당을 월별/연별로 집계합니다. USD 와 응답 시점 환율 기반
+          KRW 환산 중 상단 통화 토글에 따라 한 쪽을 표시합니다.
         </p>
       </div>
 
@@ -58,16 +72,18 @@ export function Pnl() {
 
       <PnlUnitToggle unit={unit} onChange={setUnit} />
 
-      {query.isPending && <PnlSkeleton />}
+      {currency === 'KRW' && <RateHeader rate={usdKrwRate} valid={rateValid} />}
 
-      {query.isError && (
+      {tradesQuery.isPending && <PnlSkeleton />}
+
+      {tradesQuery.isError && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/30 dark:text-rose-300">
           <p className="mb-2">
-            거래 내역을 불러오지 못했습니다: {(query.error as Error).message}
+            거래 내역을 불러오지 못했습니다: {(tradesQuery.error as Error).message}
           </p>
           <button
             type="button"
-            onClick={() => query.refetch()}
+            onClick={() => tradesQuery.refetch()}
             className="rounded border border-rose-300 px-3 py-1 text-xs hover:bg-rose-100 dark:border-rose-800 dark:hover:bg-rose-900/40"
           >
             재시도
@@ -75,8 +91,29 @@ export function Pnl() {
         </div>
       )}
 
-      {query.isSuccess && <PnlTable rows={rows} />}
+      {tradesQuery.isSuccess && <PnlTable rows={rows} currency={currency} />}
     </section>
+  )
+}
+
+function RateHeader({ rate, valid }: { rate: string | null; valid: boolean }) {
+  const tooltip =
+    '응답 시점 환율로 일괄 환산. 거래 시점 환율과 차이가 있을 수 있어 ' +
+    '정확한 KRW 신고 환산은 매매기준율을 사용해야 합니다.'
+  if (!valid) {
+    return (
+      <p className="text-xs text-slate-500 dark:text-slate-400" title={tooltip}>
+        환산 환율: <span className="text-slate-700 dark:text-slate-200">— (조회 실패)</span>
+      </p>
+    )
+  }
+  return (
+    <p className="text-xs text-slate-500 dark:text-slate-400" title={tooltip}>
+      환산 환율:{' '}
+      <span className="text-slate-700 dark:text-slate-200">
+        {formatRate(rate)} KRW/USD (응답 시점, 참고치)
+      </span>
+    </p>
   )
 }
 
@@ -92,13 +129,20 @@ function PnlSkeleton() {
 /**
  * 거래 목록을 [from, to+1day) 윈도로 필터해 KST 기준 월/연 단위로 그룹.
  * 각 그룹마다 SELL.realizedPnlUsd 와 DIVIDEND.cashAmount 합산.
+ *
+ *  - currency === 'USD' 면 USD 합계를 그대로 string 으로 반환.
+ *  - currency === 'KRW' 면 USD 합계 × usdKrwRate 를 셀에 싣는다.
+ *  - usdKrwRate 가 null/0/NaN 이면 KRW 모드 셀은 모두 null → 표는 '—' fallback.
+ *
  * 결과는 최신 기간이 위로 오도록 내림차순 정렬.
  */
-function groupTrades(
+export function groupTrades(
   trades: TradeView[],
   from: string,
   to: string,
   unit: PnlUnit,
+  currency: Currency,
+  usdKrwRate: string | null,
 ): PnlRow[] {
   // PeriodSelector 의 to 는 inclusive day. 비교는 Date 변환 후 (to + 1day) 미만으로.
   const fromMs = Date.parse(`${from}T00:00:00+09:00`)
@@ -127,13 +171,21 @@ function groupTrades(
     buckets.set(key, bucket)
   }
 
+  const rateNum = usdKrwRate == null ? null : Number(usdKrwRate)
+  const rateValid = rateNum != null && Number.isFinite(rateNum) && rateNum > 0
+  const convert = (usd: number): string | null => {
+    if (currency === 'USD') return String(usd)
+    if (!rateValid) return null
+    return String(usd * (rateNum as number))
+  }
+
   const rows: PnlRow[] = []
   for (const [period, { realized, dividend }] of buckets.entries()) {
     rows.push({
       period,
-      realizedUsd: realized,
-      dividendUsd: dividend,
-      totalUsd: realized + dividend,
+      realized: convert(realized),
+      dividend: convert(dividend),
+      total: convert(realized + dividend),
     })
   }
   // en-CA "yyyy-MM" 또는 "yyyy" 라 문자열 내림차순 = 최신 우선.
