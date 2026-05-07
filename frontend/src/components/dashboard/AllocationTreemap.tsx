@@ -145,7 +145,7 @@ function TreemapCell(props: TreemapCellProps) {
           dominantBaseline="middle"
           fill="#fff"
           fontSize={tickerFontSize}
-          fontWeight={500}
+          fontWeight={400}
           style={{ pointerEvents: 'none' }}
         >
           {name}
