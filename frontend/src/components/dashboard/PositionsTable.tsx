@@ -2,7 +2,6 @@ import type { PositionView } from '../../api/types'
 import { useCurrency } from '../../app/currencyContext'
 import {
   formatMoney,
-  formatPercent,
   formatQty,
   formatSignedMoney,
   pnlColorClass,
@@ -45,9 +44,9 @@ export function PositionsTable({ positions }: Props) {
             <Th>평단 ({unit})</Th>
             <Th>현재가 ({unit})</Th>
             <Th>당일</Th>
+            <Th>평단 대비 총수익률</Th>
             <Th>52주 위치</Th>
             <Th>평가액 ({unit})</Th>
-            <Th>비중</Th>
             <Th>평가손익 ({unit})</Th>
           </tr>
         </thead>
@@ -74,6 +73,10 @@ function Row({
   const marketValue = isUsd ? position.marketValueUsd : position.marketValueKrw
   const pnl = isUsd ? position.unrealizedPnlUsd : position.unrealizedPnlKrw
   const quoteFailed = position.lastPriceUsd == null
+  const totalReturnPct = computeTotalReturnPct(
+    position.lastPriceUsd,
+    position.avgCostUsd,
+  )
 
   const rowClass = quoteFailed
     ? 'bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400'
@@ -98,6 +101,9 @@ function Row({
       <Td className={changePctColorClass(position.dailyChangePct)}>
         {formatChangePct(position.dailyChangePct)}
       </Td>
+      <Td className={changePctColorClass(totalReturnPct)}>
+        {formatChangePct(totalReturnPct)}
+      </Td>
       <Td className="min-w-[140px]">
         <WeekRangeBar
           low={position.weekLow52Usd}
@@ -107,12 +113,26 @@ function Row({
         />
       </Td>
       <Td>{quoteFailed ? '—' : formatMoney(marketValue, currency)}</Td>
-      <Td>{quoteFailed ? '—' : formatPercent(position.weight)}</Td>
       <Td className={quoteFailed ? '' : pnlColorClass(pnl)}>
         {quoteFailed ? '—' : formatSignedMoney(pnl, currency)}
       </Td>
     </tr>
   )
+}
+
+/**
+ * 평단 대비 총수익률(%) = (현재가 / 평단 - 1) * 100. USD 기준 계산(통화 무관 비율).
+ * 시세 실패·평단 0 이하·NaN 은 null → '—' 로 표시.
+ */
+function computeTotalReturnPct(
+  lastPriceUsd: string | null,
+  avgCostUsd: string,
+): string | null {
+  if (lastPriceUsd == null) return null
+  const last = Number(lastPriceUsd)
+  const avg = Number(avgCostUsd)
+  if (!Number.isFinite(last) || !Number.isFinite(avg) || avg <= 0) return null
+  return String((last / avg - 1) * 100)
 }
 
 /**

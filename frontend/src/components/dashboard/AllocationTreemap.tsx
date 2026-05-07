@@ -1,4 +1,4 @@
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts'
+import { ResponsiveContainer, Tooltip, Treemap } from 'recharts'
 import type { PortfolioView } from '../../api/types'
 import { useCurrency } from '../../app/currencyContext'
 import { formatMoney, formatPercent } from '../../app/format'
@@ -27,7 +27,7 @@ const COLORS = [
   '#ea580c',
 ]
 
-export function AllocationPie({ data }: Props) {
+export function AllocationTreemap({ data }: Props) {
   const { currency } = useCurrency()
 
   // 시세 실패 종목(weight == null)은 제외.
@@ -61,28 +61,25 @@ export function AllocationPie({ data }: Props) {
     )
   }
 
+  const treemapData = slices.map((s, idx) => ({
+    ...s,
+    color: COLORS[idx % COLORS.length],
+  }))
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
       <h3 className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
         <div className="h-72 w-full lg:flex-1">
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart margin={{ top: 8, right: 16, bottom: 8, left: 16 }}>
-              <Pie
-                data={slices}
-                dataKey="weight"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius="80%"
-                label={false}
-                labelLine={false}
-                isAnimationActive={false}
-              >
-                {slices.map((s, idx) => (
-                  <Cell key={s.name} fill={COLORS[idx % COLORS.length]} />
-                ))}
-              </Pie>
+            <Treemap
+              data={treemapData}
+              dataKey="weight"
+              nameKey="name"
+              stroke="#fff"
+              isAnimationActive={false}
+              content={<TreemapCell />}
+            >
               <Tooltip
                 formatter={(value, _name, item) => {
                   const slice = (item as { payload?: Slice } | undefined)?.payload
@@ -91,12 +88,74 @@ export function AllocationPie({ data }: Props) {
                   return [`${pct} · ${mv}`, slice?.name ?? '']
                 }}
               />
-            </PieChart>
+            </Treemap>
           </ResponsiveContainer>
         </div>
         <AllocationLegend slices={slices} />
       </div>
     </section>
+  )
+}
+
+interface TreemapCellProps {
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  depth?: number
+  name?: string
+  weight?: number
+  color?: string
+}
+
+function TreemapCell(props: TreemapCellProps) {
+  const { x = 0, y = 0, width = 0, height = 0, depth, name, weight, color } = props
+  if (depth !== 1 || width <= 0 || height <= 0) {
+    return null
+  }
+  const showLabel = width > 44 && height > 22
+  const showPct = width > 56 && height > 38
+  const fill = color ?? '#2563eb'
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill={fill}
+        stroke="#fff"
+        strokeWidth={2}
+      />
+      {showLabel && name ? (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 - (showPct ? 7 : 0)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="#fff"
+          fontSize={12}
+          fontWeight={600}
+          style={{ pointerEvents: 'none' }}
+        >
+          {name}
+        </text>
+      ) : null}
+      {showPct && weight != null ? (
+        <text
+          x={x + width / 2}
+          y={y + height / 2 + 9}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill="#fff"
+          fontSize={10}
+          opacity={0.85}
+          style={{ pointerEvents: 'none' }}
+        >
+          {formatPercent(String(weight))}
+        </text>
+      ) : null}
+    </g>
   )
 }
 

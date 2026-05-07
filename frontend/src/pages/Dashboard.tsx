@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPortfolio } from '../api/client'
 import { SummaryCards } from '../components/dashboard/SummaryCards'
-import { AllocationPie } from '../components/dashboard/AllocationPie'
+import { AllocationTreemap } from '../components/dashboard/AllocationTreemap'
 import { PositionsTable } from '../components/dashboard/PositionsTable'
 import { exportElementAsPng } from '../app/exportImage'
 import { formatKstDate } from '../app/format'
@@ -69,7 +69,7 @@ export function Dashboard() {
         </button>
       </div>
       <SummaryCards data={data} />
-      <AllocationPie data={data} />
+      <AllocationTreemap data={data} />
       <PositionsTable positions={data.positions} />
     </div>
   )
