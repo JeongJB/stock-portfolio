@@ -13,18 +13,24 @@ interface Slice {
   marketValue: string | null
 }
 
-// Tailwind 팔레트 인접 색상. 슬라이스가 늘어도 cycle 되도록.
+// 15 항목까지 treemap 인접 셀 구분이 잘 되도록 큐레이팅한 Tailwind 600/700 톤.
+// 16 개째부터 cycle. warm/cool 교차로 배치해 상위 종목들이 한 색상 계열에 몰리지 않게.
 const COLORS = [
-  '#2563eb',
-  '#16a34a',
-  '#f59e0b',
-  '#ef4444',
-  '#a855f7',
-  '#0891b2',
-  '#db2777',
-  '#65a30d',
-  '#7c3aed',
-  '#ea580c',
+  '#2563eb', // blue-600
+  '#059669', // emerald-600
+  '#d97706', // amber-600
+  '#dc2626', // red-600
+  '#7c3aed', // violet-600
+  '#0891b2', // cyan-600
+  '#db2777', // pink-600
+  '#65a30d', // lime-600
+  '#ea580c', // orange-600
+  '#0d9488', // teal-600
+  '#4f46e5', // indigo-600
+  '#c026d3', // fuchsia-600
+  '#a16207', // yellow-700
+  '#be123c', // rose-700
+  '#475569', // slate-600
 ]
 
 export function AllocationTreemap({ data }: Props) {
@@ -113,9 +119,13 @@ function TreemapCell(props: TreemapCellProps) {
   if (depth !== 1 || width <= 0 || height <= 0) {
     return null
   }
-  const showLabel = width > 44 && height > 22
-  const showPct = width > 56 && height > 38
   const fill = color ?? '#2563eb'
+  const tickerFontSize = pickTickerFontSize(width, height)
+  const pctFontSize = pickPctFontSize(width, height)
+  const showTicker = tickerFontSize > 0 && Boolean(name)
+  const showPct = pctFontSize > 0 && weight != null
+  const tickerY = showPct ? y + height / 2 - tickerFontSize / 2 : y + height / 2
+  const pctY = y + height / 2 + pctFontSize / 2 + 2
   return (
     <g>
       <rect
@@ -127,28 +137,28 @@ function TreemapCell(props: TreemapCellProps) {
         stroke="#fff"
         strokeWidth={2}
       />
-      {showLabel && name ? (
+      {showTicker ? (
         <text
           x={x + width / 2}
-          y={y + height / 2 - (showPct ? 7 : 0)}
+          y={tickerY}
           textAnchor="middle"
           dominantBaseline="middle"
           fill="#fff"
-          fontSize={12}
-          fontWeight={600}
+          fontSize={tickerFontSize}
+          fontWeight={500}
           style={{ pointerEvents: 'none' }}
         >
           {name}
         </text>
       ) : null}
-      {showPct && weight != null ? (
+      {showPct ? (
         <text
           x={x + width / 2}
-          y={y + height / 2 + 9}
+          y={pctY}
           textAnchor="middle"
           dominantBaseline="middle"
           fill="#fff"
-          fontSize={10}
+          fontSize={pctFontSize}
           opacity={0.85}
           style={{ pointerEvents: 'none' }}
         >
@@ -157,6 +167,20 @@ function TreemapCell(props: TreemapCellProps) {
       ) : null}
     </g>
   )
+}
+
+// 셀이 좁아질수록 단계적으로 폰트 축소. 0 이면 라벨 숨김.
+function pickTickerFontSize(w: number, h: number): number {
+  if (w >= 70 && h >= 24) return 12
+  if (w >= 50 && h >= 20) return 11
+  if (w >= 32 && h >= 16) return 9
+  return 0
+}
+
+function pickPctFontSize(w: number, h: number): number {
+  if (w >= 80 && h >= 44) return 10
+  if (w >= 60 && h >= 36) return 9
+  return 0
 }
 
 interface LegendProps {

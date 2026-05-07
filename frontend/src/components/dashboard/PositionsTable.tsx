@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { PositionView } from '../../api/types'
 import { useCurrency } from '../../app/currencyContext'
 import {
@@ -41,13 +43,11 @@ export function PositionsTable({ positions }: Props) {
           <tr>
             <Th align="left">티커</Th>
             <Th>수량</Th>
-            <Th>평단 ({unit})</Th>
-            <Th>현재가 ({unit})</Th>
             <Th>당일</Th>
-            <Th>평단 대비 총수익률</Th>
-            <Th>52주 위치</Th>
+            <Th>수익률</Th>
             <Th>평가액 ({unit})</Th>
             <Th>평가손익 ({unit})</Th>
+            <Th>52주 위치</Th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -82,10 +82,78 @@ function Row({
     ? 'bg-slate-100 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400'
     : ''
 
+  const [open, setOpen] = useState(false)
+  const [hover, setHover] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const closeTimer = useRef<number | null>(null)
+  const isOpen = open || hover
+
+  const cancelClose = () => {
+    if (closeTimer.current != null) {
+      clearTimeout(closeTimer.current)
+      closeTimer.current = null
+    }
+  }
+  // 버튼→팝오버 사이 4px gap 을 마우스가 건널 때 깜빡이지 않도록 close 를 살짝 지연.
+  const scheduleClose = () => {
+    cancelClose()
+    closeTimer.current = window.setTimeout(() => {
+      setHover(false)
+      closeTimer.current = null
+    }, 120)
+  }
+  useEffect(() => () => cancelClose(), [])
+
+  useEffect(() => {
+    if (!open) return
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (buttonRef.current?.contains(t)) return
+      if (popoverRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // 팝오버 마운트 시 1회 위치 측정. callback ref 는 commit 단계(브라우저 paint 직전)에
+  // 동기 실행되므로 직접 style 을 써도 깜빡임 없음. state·effect 미사용 → 캐스케이드 렌더 회피.
+  const setPopoverNode = useCallback((node: HTMLDivElement | null) => {
+    popoverRef.current = node
+    if (!node) return
+    const button = buttonRef.current
+    if (!button) return
+    const rect = button.getBoundingClientRect()
+    node.style.top = `${rect.bottom + window.scrollY + 4}px`
+    node.style.left = `${rect.left + window.scrollX}px`
+  }, [])
+
   return (
     <tr className={rowClass}>
       <Td align="left" className="font-medium">
-        {position.ticker}
+        <button
+          type="button"
+          ref={buttonRef}
+          className="rounded underline decoration-dotted underline-offset-4 hover:text-blue-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:text-blue-400"
+          onClick={() => setOpen((o) => !o)}
+          onMouseEnter={() => {
+            cancelClose()
+            setHover(true)
+          }}
+          onMouseLeave={scheduleClose}
+          aria-expanded={isOpen}
+          aria-haspopup="dialog"
+        >
+          {position.ticker}
+        </button>
         {quoteFailed && (
           <span
             className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-normal text-amber-800 dark:bg-amber-900/40 dark:text-amber-300"
@@ -94,27 +162,51 @@ function Row({
             시세 없음
           </span>
         )}
+        {isOpen
+          ? createPortal(
+              <div
+                ref={setPopoverNode}
+                role="dialog"
+                className="absolute z-50 min-w-45 rounded-lg border border-slate-200 bg-white p-3 shadow-lg dark:border-slate-700 dark:bg-slate-800"
+                onMouseEnter={() => {
+                  cancelClose()
+                  setHover(true)
+                }}
+                onMouseLeave={scheduleClose}
+              >
+                <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                  <dt className="text-slate-500 dark:text-slate-400">평단</dt>
+                  <dd className="text-right tabular-nums text-slate-700 dark:text-slate-200">
+                    {formatMoney(avgCost, currency)}
+                  </dd>
+                  <dt className="text-slate-500 dark:text-slate-400">현재가</dt>
+                  <dd className="text-right tabular-nums text-slate-700 dark:text-slate-200">
+                    {quoteFailed ? '—' : formatMoney(lastPrice, currency)}
+                  </dd>
+                </dl>
+              </div>,
+              document.body,
+            )
+          : null}
       </Td>
       <Td>{formatQty(position.qty)}</Td>
-      <Td>{formatMoney(avgCost, currency)}</Td>
-      <Td>{quoteFailed ? '—' : formatMoney(lastPrice, currency)}</Td>
       <Td className={changePctColorClass(position.dailyChangePct)}>
         {formatChangePct(position.dailyChangePct)}
       </Td>
       <Td className={changePctColorClass(totalReturnPct)}>
         {formatChangePct(totalReturnPct)}
       </Td>
-      <Td className="min-w-[140px]">
-        <WeekRangeBar
-          low={position.weekLow52Usd}
-          high={position.weekHigh52Usd}
-          current={position.lastPriceUsd}
-          ratio={position.weekRangeRatio}
-        />
-      </Td>
       <Td>{quoteFailed ? '—' : formatMoney(marketValue, currency)}</Td>
       <Td className={quoteFailed ? '' : pnlColorClass(pnl)}>
         {quoteFailed ? '—' : formatSignedMoney(pnl, currency)}
+      </Td>
+      <Td className="min-w-35">
+        <WeekRangeBar
+            low={position.weekLow52Usd}
+            high={position.weekHigh52Usd}
+            current={position.lastPriceUsd}
+            ratio={position.weekRangeRatio}
+        />
       </Td>
     </tr>
   )
