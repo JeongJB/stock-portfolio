@@ -7,6 +7,7 @@ import com.example.stockportfolio.adapter.web.dto.SnapshotListResponse;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.adapter.web.dto.TradeView;
 import com.example.stockportfolio.application.PortfolioApplicationService;
+import com.example.stockportfolio.application.SectorValidator;
 import com.example.stockportfolio.domain.Trade;
 
 import jakarta.validation.Valid;
@@ -16,6 +17,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -24,7 +26,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api")
@@ -75,6 +79,39 @@ public class PortfolioController {
     public SnapshotView takeSnapshot() {
         return service.takeSnapshot();
     }
+
+    /**
+     * 종목 분류(sector) 단일 변경. BUY 흐름을 거치지 않고 직접 변경할 수 있는 진입점.
+     *
+     * <p>요청 본문의 {@code sector} 는 nullable — null 또는 trim 후 빈 문자열이면 분류 제거 의도로
+     * 해석한다. 길이 30자 초과면 422({@link HttpStatus#UNPROCESSABLE_ENTITY}).
+     *
+     * <p>ticker 가 META 에 없어도 NAS 임시 박제로 신규 생성한다 (BUY 의 sector 박제 패턴과 동일).
+     */
+    @PatchMapping("/positions/{ticker}/sector")
+    public ResponseEntity<?> updateSector(@PathVariable("ticker") String ticker,
+                                          @RequestBody UpdateSectorRequest request) {
+        String raw = request == null ? null : request.sector();
+        String normalized;
+        try {
+            normalized = SectorValidator.normalize(raw);
+        } catch (IllegalArgumentException ex) {
+            // PATCH 정책: 길이 초과는 422 (요청 형식은 맞으나 비즈니스 한계 위반).
+            // ResponseStatusException 대신 직접 응답 — ApiExceptionHandler 의 IllegalArgumentException(400)
+            // 매핑 우회.
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("error", "validation_failed");
+            body.put("message", ex.getMessage());
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(body);
+        }
+        String upperTicker = ticker.toUpperCase(java.util.Locale.ROOT);
+        String savedSector = service.updateSector(upperTicker, normalized);
+        return ResponseEntity.ok(new UpdateSectorResponse(upperTicker, savedSector));
+    }
+
+    public record UpdateSectorRequest(String sector) {}
+
+    public record UpdateSectorResponse(String ticker, String sector) {}
 
     @GetMapping("/snapshots")
     public SnapshotListResponse listSnapshots(

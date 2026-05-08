@@ -1218,6 +1218,88 @@ class PortfolioApplicationServiceTest {
         assertNull(aapl.sector());
     }
 
+    // --- P1-9 보강: updateSector ---
+
+    @Test
+    @DisplayName("updateSector: 신규 ticker → NAS 임시 박제 + sector 저장")
+    void updateSector_newTickerCreatesMeta() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        PortfolioApplicationService service = newServiceWithMetaRepo(
+                repo, new StubMarketData(new BigDecimal("1400")), metaRepo);
+
+        String saved = service.updateSector("AAPL", "Big Tech");
+
+        assertEquals("Big Tech", saved);
+        TickerMeta meta = metaRepo.find("AAPL").orElseThrow();
+        assertEquals("Big Tech", meta.sector());
+        assertEquals(Exchange.NAS, meta.exchange(), "META 부재 시 NAS 임시 박제");
+    }
+
+    @Test
+    @DisplayName("updateSector: 기존 META 의 sector 만 갱신, 거래소·카운터·시각 보존")
+    void updateSector_existingMetaUpdatesOnlySector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        Instant verified = Instant.parse("2026-01-01T00:00:00Z");
+        metaRepo.save(new TickerMeta("AAPL", Exchange.NYS, verified, 2, "Old"));
+
+        PortfolioApplicationService service = newServiceWithMetaRepo(
+                repo, new StubMarketData(new BigDecimal("1400")), metaRepo);
+
+        service.updateSector("AAPL", "Big Tech");
+
+        TickerMeta meta = metaRepo.find("AAPL").orElseThrow();
+        assertEquals("Big Tech", meta.sector());
+        assertEquals(Exchange.NYS, meta.exchange());
+        assertEquals(verified, meta.lastVerifiedAt());
+        assertEquals(2, meta.consecutiveQuoteFailures());
+    }
+
+    @Test
+    @DisplayName("updateSector: null 입력 → 기존 sector 가 명시적으로 제거된다 (BUY 와 다른 정책)")
+    void updateSector_nullExplicitlyRemovesExistingSector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        metaRepo.save(new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-01-01T00:00:00Z"), 0, "Old"));
+
+        PortfolioApplicationService service = newServiceWithMetaRepo(
+                repo, new StubMarketData(new BigDecimal("1400")), metaRepo);
+
+        String saved = service.updateSector("AAPL", null);
+
+        assertNull(saved);
+        assertNull(metaRepo.find("AAPL").orElseThrow().sector());
+    }
+
+    @Test
+    @DisplayName("updateSector: ticker blank → IllegalArgumentException")
+    void updateSector_blankTickerRejected() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        PortfolioApplicationService service = newServiceWithMetaRepo(
+                repo, new StubMarketData(new BigDecimal("1400")), metaRepo);
+
+        assertThrows(IllegalArgumentException.class, () -> service.updateSector("   ", "Big Tech"));
+    }
+
+    @Test
+    @DisplayName("SectorValidator.normalize: trim/blank/길이 케이스")
+    void sectorValidator_normalize_cases() {
+        assertNull(SectorValidator.normalize(null));
+        assertNull(SectorValidator.normalize(""));
+        assertNull(SectorValidator.normalize("   "));
+        assertEquals("Big Tech", SectorValidator.normalize("  Big Tech  "));
+        assertEquals("Big Tech", SectorValidator.normalize("Big Tech"));
+        // 정확히 30자 — 통과
+        String exact = "a".repeat(30);
+        assertEquals(exact, SectorValidator.normalize(exact));
+        // 31자 — 거부
+        assertThrows(IllegalArgumentException.class,
+                () -> SectorValidator.normalize("a".repeat(31)));
+    }
+
     @Test
     @DisplayName("deleteTrade: WITHDRAW 삭제는 항상 안전 → 현금 회복")
     void deleteTrade_withdrawAlwaysAllowed() {

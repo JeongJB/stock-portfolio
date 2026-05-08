@@ -99,6 +99,31 @@ public class PortfolioApplicationService {
     }
 
     /**
+     * 사용자가 명시적으로 호출하는 sector 변경. BUY 와 달리 best-effort 가 아니라
+     * 실패는 그대로 전파(컨트롤러가 5xx 매핑) 한다.
+     *
+     * <p>입력 정규화는 호출자(컨트롤러) 책임. 이 메서드는 이미 정규화된 sector 값
+     * (null 또는 trim 된 길이 ≤ 30 문자열) 만 받는다.
+     *
+     * <p>META 가 없으면 NAS 거래소로 임시 박제 — BUY 의 {@link #persistSectorBestEffort}
+     * 와 동일 패턴. 다음 view() 의 자기치유 흐름이 정확한 거래소로 정정한다.
+     *
+     * @return 갱신된 META 의 sector (null 가능 — 분류 제거 시).
+     */
+    public String updateSector(String ticker, String normalizedSector) {
+        Objects.requireNonNull(ticker, "ticker");
+        if (ticker.isBlank()) {
+            throw new IllegalArgumentException("ticker 는 비어 있을 수 없다");
+        }
+        Optional<TickerMeta> existing = tickerMetaRepository.find(ticker);
+        TickerMeta updated = existing
+                .map(meta -> meta.withSector(normalizedSector))
+                .orElseGet(() -> new TickerMeta(ticker, Exchange.NAS, clock.instant(), 0, normalizedSector));
+        tickerMetaRepository.save(updated);
+        return updated.sector();
+    }
+
+    /**
      * BUY 거래 직후 ticker 의 META.sector 를 갱신한다.
      * <ul>
      *   <li>META 가 이미 있으면 sector 만 교체 후 save.</li>

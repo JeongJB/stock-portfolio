@@ -28,12 +28,12 @@ public record RecordTradeCommand(
         String sector
 ) {
 
-    public static final int SECTOR_MAX_LENGTH = 30;
+    public static final int SECTOR_MAX_LENGTH = SectorValidator.SECTOR_MAX_LENGTH;
 
     public RecordTradeCommand {
         // sector 는 BUY 가 아니어도 들어올 수 있지만 (FE 가 잘못 보낸 경우 등) BUY 이외는 어차피 무시.
         // 정규화는 일관 — trim 후 blank 면 null, 길이 초과면 IllegalArgumentException.
-        sector = normalizeSector(sector);
+        sector = SectorValidator.normalize(sector);
     }
 
     /** 9-인자 보다 단순한 호출자 (기존 테스트 등) 호환용 8-인자 생성자. sector=null. */
@@ -41,21 +41,6 @@ public record RecordTradeCommand(
                               BigDecimal qty, BigDecimal price, BigDecimal fee,
                               BigDecimal cashAmount, String memo) {
         this(type, executedAt, ticker, qty, price, fee, cashAmount, memo, null);
-    }
-
-    /**
-     * trim → blank 면 null, 길이 초과면 IllegalArgumentException. 그 외에는 trim 결과 반환.
-     * 정규화 후 길이를 검증해야 사용자 입력의 후행 공백이 30 자 한계를 야기하지 않는다.
-     */
-    private static String normalizeSector(String raw) {
-        if (raw == null) return null;
-        String trimmed = raw.trim();
-        if (trimmed.isEmpty()) return null;
-        if (trimmed.length() > SECTOR_MAX_LENGTH) {
-            throw new IllegalArgumentException(
-                    "sector 는 최대 " + SECTOR_MAX_LENGTH + "자 (입력: " + trimmed.length() + "자)");
-        }
-        return trimmed;
     }
 
     public Trade toTrade() {

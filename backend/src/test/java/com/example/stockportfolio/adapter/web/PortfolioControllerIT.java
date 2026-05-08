@@ -34,6 +34,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -497,6 +498,100 @@ class PortfolioControllerIT {
         mockMvc.perform(delete("/api/trades/non-existent-uuid"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("not_found"));
+    }
+
+    @Test
+    void PATCH_positions_sector_정상_입력은_200과_변경된_sector를_반환한다() throws Exception {
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"Big Tech"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ticker").value("AAPL"))
+                .andExpect(jsonPath("$.sector").value("Big Tech"));
+    }
+
+    @Test
+    void PATCH_positions_sector_trim된_입력은_정규화되어_저장된다() throws Exception {
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"  Big Tech  "}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sector").value("Big Tech"));
+    }
+
+    @Test
+    void PATCH_positions_sector_null은_분류_제거를_의미한다() throws Exception {
+        // 먼저 "Big Tech" 로 박제
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"Big Tech"}
+                                """))
+                .andExpect(status().isOk());
+
+        // null 로 제거
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":null}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ticker").value("AAPL"))
+                .andExpect(jsonPath("$.sector").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void PATCH_positions_sector_빈_문자열은_분류_제거로_정규화된다() throws Exception {
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":""}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sector").value(org.hamcrest.Matchers.nullValue()));
+
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"   "}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sector").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
+    void PATCH_positions_sector_길이_30자는_허용되고_31자는_422를_반환한다() throws Exception {
+        String exactly30 = "a".repeat(30);
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"%s"}
+                                """.formatted(exactly30)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sector").value(exactly30));
+
+        String overLimit = "a".repeat(31);
+        mockMvc.perform(patch("/api/positions/AAPL/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"%s"}
+                                """.formatted(overLimit)))
+                .andExpect(status().isUnprocessableEntity());
+    }
+
+    @Test
+    void PATCH_positions_ticker는_대문자로_정규화된다() throws Exception {
+        mockMvc.perform(patch("/api/positions/aapl/sector")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"sector":"Big Tech"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ticker").value("AAPL"));
     }
 
     @Test
