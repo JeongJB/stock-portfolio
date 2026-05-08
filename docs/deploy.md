@@ -83,34 +83,28 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 | L1 GeoRestriction | CloudFront 가 KR 외 IP 차단 | KR-only |
 | L2 Basic Auth | CloudFront Function 의 sha256 게이트 | SSM SecureString 보관 |
 | L3 API Gateway throttle/quota | Usage plan + API key | 5 RPS / burst 10 / 일 2000 |
-| L4 Lambda Reserved Concurrency | 동시 실행 상한으로 비용 폭주 차단 | **0 (비활성)** — 한도 증액 후 1 로 |
+| L4 Lambda Reserved Concurrency | 동시 실행 상한으로 비용 폭주 차단 | **1** (한도 증액 1000 적용 완료) |
 
 `ApiThrottleRateLimit / ApiThrottleBurstLimit / ApiQuotaPerDay / LambdaReservedConcurrency / MonthlyBudgetUsd` 파라미터 override 로 즉시 조정 가능.
 
-### Lambda Reserved Concurrency 활성화 (1회 작업)
+### Lambda concurrent executions quota 메모
 
-신규 AWS 계정의 Lambda concurrent execution quota 가 10 으로 묶여 있어 `ReservedConcurrentExecutions=1` 적용이 거부된다. 한도 증액 절차:
+현재 AWS 계정 한도는 1000 (Service Quotas: Lambda `L-B99A9384`). 신규 AWS 계정은 기본 10 으로 묶여 있어 reserved 1 도 거부될 수 있다 (unreserved 9 < AWS hard floor 10). 새 계정/리전에서 같은 함정을 만나면:
 
 ```bash
+# 한도 확인
+aws service-quotas get-service-quota \
+  --service-code lambda --quota-code L-B99A9384 \
+  --region ap-northeast-2 --query 'Quota.Value'
+
+# 한도 증액 요청 (보통 자동 승인, 길어도 1~2 영업일)
 aws service-quotas request-service-quota-increase \
-  --service-code lambda \
-  --quota-code L-B99A9384 \
-  --desired-value 1000 \
-  --region ap-northeast-2
+  --service-code lambda --quota-code L-B99A9384 \
+  --desired-value 1000 --region ap-northeast-2
 
-# 진행 상태
-aws service-quotas list-requested-service-quota-change-history-by-quota \
-  --service-code lambda \
-  --quota-code L-B99A9384 \
-  --region ap-northeast-2
-```
-
-승인 후 `LambdaReservedConcurrency=1` 로 deploy:
-
-```bash
-sam deploy --parameter-overrides LambdaReservedConcurrency=1 \
+# 승인 전 임시 우회 — reserved 안 잡고 unreserved pool 사용
+sam deploy --parameter-overrides LambdaReservedConcurrency=0 \
   --no-confirm-changeset --region ap-northeast-2
-# 또는 template 의 Default 를 1 로 영구 변경 후 infra/deploy.sh
 ```
 
 ## 트러블슈팅 (실제 겪은 것 위주)

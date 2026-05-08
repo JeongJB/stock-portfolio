@@ -159,7 +159,7 @@ time curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" -o /dev/null
 ### CloudFormation/리소스 상태 확인
 
 1. CloudFormation 콘솔 → `stock-portfolio` 스택이 `UPDATE_COMPLETE` 상태인지.
-2. Lambda 콘솔 → `stock-portfolio-prod-api` 함수의 Runtime/Handler/메모리/타임아웃 확인. **Reserved concurrency 는 디폴트 0(=미설정, unreserved pool 사용)** 이며 신규 AWS 계정 한도 10 회피용. 한도를 1000 으로 증액한 뒤 `LambdaReservedConcurrency=1` 로 활성화하면 비용 폭주 안전망 layer 가 켜진다 — 자세한 절차는 [docs/deploy.md](../docs/deploy.md) 참고.
+2. Lambda 콘솔 → `stock-portfolio-prod-api` 함수의 Runtime/Handler/메모리/타임아웃 확인. **Reserved concurrency = 1** (한도 1000 증액 적용 완료, 비용 폭주 안전망 layer 활성). 새 계정/리전에서 한도 10 으로 묶여 거부될 경우의 우회는 [docs/deploy.md](../docs/deploy.md) 의 "Lambda concurrent executions quota 메모" 참고.
 3. API Gateway 콘솔 → REST API `stock-portfolio-prod` 의 stage `prod`, `/api/{proxy+}` ANY 메서드, API key required 켜짐 확인.
 4. Usage plan `stock-portfolio-prod-usage-plan` → throttle/quota 값 확인 (디폴트 5 RPS / burst 10 / 일 2000).
 5. Budgets 콘솔 → `stock-portfolio-prod-monthly-budget` 가 active 상태이고 첫 ACTUAL 데이터가 채워졌는지 (며칠 걸릴 수 있음). "Receive Billing Alerts" 활성 여부도 Account → Billing preferences 에서 1회 확인.

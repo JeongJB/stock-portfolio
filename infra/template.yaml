@@ -46,13 +46,11 @@ Parameters:
       Usage plan 의 1일 quota. 1인 일 평균 호출 5~50회 대비 100배 여유 + 공격 24h 자동 정지 안전망.
   LambdaReservedConcurrency:
     Type: Number
-    Default: 0
+    Default: 1
     Description: >-
-      Lambda 동시 실행 상한 (reserved concurrency). 0 = 속성 미설정 → 계정 unreserved
-      pool 사용 (평소 1000). 1 이상이면 그 값으로 capped. 신규 AWS 계정 한도가 10 이라
-      1 도 거부될 수 있어 (unreserved 9 < AWS hard floor 10) 디폴트는 0. 한도를 1000 으로
-      증액 (Service Quotas: Lambda L-B99A9384) 한 뒤 1 로 올리면 비용 폭주 안전망 layer
-      활성화. 한도 증액 전엔 throttle/quota + Budgets 3-layer 만으로 운영.
+      Lambda 동시 실행 상한 (reserved concurrency). 1 이상이면 그 값으로 capped — 1인용
+      + 비용 폭주 안전망. 0 = 속성 미설정(unreserved pool 사용) — 계정 한도가 너무 낮을 때
+      회피용. 본인이 두 탭 동시 사용 시 살짝 직렬화 가능, 거슬리면 2 로.
   MonthlyBudgetUsd:
     Type: Number
     Default: 5
