@@ -299,6 +299,10 @@ final class DynamoAttributes {
         item.put("lastVerifiedAt", s(meta.lastVerifiedAt().toString()));
         item.put("consecutiveQuoteFailures",
                 AttributeValue.fromN(Integer.toString(meta.consecutiveQuoteFailures())));
+        // sector 는 nullable — null 이면 attribute 부재 (DDB null 회피, 옛 항목과 자연 호환).
+        if (meta.sector() != null) {
+            item.put("sector", s(meta.sector()));
+        }
         return item;
     }
 
@@ -307,7 +311,9 @@ final class DynamoAttributes {
         Exchange exchange = Exchange.valueOf(item.get("exchange").s());
         Instant lastVerifiedAt = Instant.parse(item.get("lastVerifiedAt").s());
         int failures = Integer.parseInt(item.get("consecutiveQuoteFailures").n());
-        return new TickerMeta(ticker, exchange, lastVerifiedAt, failures);
+        // 신구 호환: 옛 항목엔 sector attribute 가 없을 수 있다 → null 매핑.
+        String sector = item.containsKey("sector") ? item.get("sector").s() : null;
+        return new TickerMeta(ticker, exchange, lastVerifiedAt, failures, sector);
     }
 
     static Map<String, AttributeValue> kisAccessTokenItem(KisAccessTokenStore.StoredToken token) {

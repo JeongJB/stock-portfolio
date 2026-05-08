@@ -11,6 +11,9 @@ import java.math.BigDecimal;
  *
  * <p>당일 등락률·52주 고저·52주 위치 비율은 KIS 응답에 해당 키가 있을 때만 채워진다.
  * 시세는 잡혔지만 보조 필드만 누락된 경우(노출 종목, KIS 명세 변경 등) 도 가능하다.
+ *
+ * <p>{@code sector} 는 사용자가 BUY 거래 시 자유 입력한 분류 라벨. META 에 박제된 값을 그대로 전파.
+ * 옛 종목(P1-9 도입 전 매수) 또는 미입력 종목은 null.
  */
 public record PositionView(
         String ticker,
@@ -28,10 +31,11 @@ public record PositionView(
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal dailyChangePct,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal weekHigh52Usd,
         @JsonSerialize(using = ToStringSerializer.class) BigDecimal weekLow52Usd,
-        @JsonSerialize(using = ToStringSerializer.class) BigDecimal weekRangeRatio
+        @JsonSerialize(using = ToStringSerializer.class) BigDecimal weekRangeRatio,
+        String sector
 ) {
     /**
-     * 보조 필드 4종이 없는 호출자(스냅샷 역직렬화 등) 용 호환 생성자.
+     * 보조 필드 4종이 없는 호출자(스냅샷 역직렬화 등) 용 호환 생성자. sector=null.
      */
     public PositionView(
             String ticker,
@@ -49,6 +53,30 @@ public record PositionView(
         this(ticker, qty, avgCostUsd, avgCostKrw, realizedPnlUsd,
                 lastPriceUsd, lastPriceKrw, marketValueUsd, marketValueKrw,
                 weight, unrealizedPnlUsd, unrealizedPnlKrw,
-                null, null, null, null);
+                null, null, null, null, null);
+    }
+
+    /** sector 가 없는 호출자 호환용 16-인자 생성자. */
+    public PositionView(
+            String ticker,
+            BigDecimal qty,
+            BigDecimal avgCostUsd,
+            BigDecimal avgCostKrw,
+            BigDecimal realizedPnlUsd,
+            BigDecimal lastPriceUsd,
+            BigDecimal lastPriceKrw,
+            BigDecimal marketValueUsd,
+            BigDecimal marketValueKrw,
+            BigDecimal weight,
+            BigDecimal unrealizedPnlUsd,
+            BigDecimal unrealizedPnlKrw,
+            BigDecimal dailyChangePct,
+            BigDecimal weekHigh52Usd,
+            BigDecimal weekLow52Usd,
+            BigDecimal weekRangeRatio) {
+        this(ticker, qty, avgCostUsd, avgCostKrw, realizedPnlUsd,
+                lastPriceUsd, lastPriceKrw, marketValueUsd, marketValueKrw,
+                weight, unrealizedPnlUsd, unrealizedPnlKrw,
+                dailyChangePct, weekHigh52Usd, weekLow52Usd, weekRangeRatio, null);
     }
 }

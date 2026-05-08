@@ -18,16 +18,20 @@ import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeDefinition;
+import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.BillingMode;
 import software.amazon.awssdk.services.dynamodb.model.CreateTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteTableRequest;
 import software.amazon.awssdk.services.dynamodb.model.KeySchemaElement;
 import software.amazon.awssdk.services.dynamodb.model.KeyType;
+import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.ScalarAttributeType;
 
 import java.net.URI;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -122,5 +126,52 @@ class DynamoTickerMetaRepositoryIT {
         TickerMeta loaded = repository.find("FOO").orElseThrow();
         assertThat(loaded.consecutiveQuoteFailures()).isEqualTo(7);
         assertThat(loaded.exchange()).isEqualTo(Exchange.AMS);
+    }
+
+    @Test
+    void sector_라운드트립_save_후_find하면_같은_값() {
+        TickerMeta meta = new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-04-28T00:00:00Z"), 0, "Big Tech");
+
+        repository.save(meta);
+
+        TickerMeta loaded = repository.find("AAPL").orElseThrow();
+        assertThat(loaded.sector()).isEqualTo("Big Tech");
+    }
+
+    @Test
+    void sector_null_이면_attribute_부재로_저장되고_load_시_null_매핑() {
+        // null sector 가 정상 저장된다 + 다시 로드 시 null 로 매핑되는지 확인.
+        TickerMeta meta = new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-04-28T00:00:00Z"), 0, null);
+
+        repository.save(meta);
+
+        TickerMeta loaded = repository.find("AAPL").orElseThrow();
+        assertThat(loaded.sector()).isNull();
+    }
+
+    @Test
+    void 옛_형식_META_item_은_sector_attribute_없이도_읽힌다() {
+        // P1-9 도입 전 박제된 META 항목 시뮬레이션 — sector attribute 자체가 부재.
+        Map<String, AttributeValue> oldItem = new HashMap<>();
+        oldItem.put("pk", AttributeValue.fromS("TICKER#LEGACY"));
+        oldItem.put("sk", AttributeValue.fromS("META"));
+        oldItem.put("ticker", AttributeValue.fromS("LEGACY"));
+        oldItem.put("exchange", AttributeValue.fromS("NAS"));
+        oldItem.put("lastVerifiedAt", AttributeValue.fromS("2026-04-28T00:00:00Z"));
+        oldItem.put("consecutiveQuoteFailures", AttributeValue.fromN("0"));
+        // sector attribute 의도적 부재.
+
+        client.putItem(PutItemRequest.builder()
+                .tableName(TABLE_NAME)
+                .item(oldItem)
+                .build());
+
+        TickerMeta loaded = repository.find("LEGACY").orElseThrow();
+        assertThat(loaded.ticker()).isEqualTo("LEGACY");
+        assertThat(loaded.exchange()).isEqualTo(Exchange.NAS);
+        assertThat(loaded.consecutiveQuoteFailures()).isZero();
+        assertThat(loaded.sector()).isNull();
     }
 }

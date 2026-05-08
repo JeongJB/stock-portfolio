@@ -14,6 +14,8 @@ import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.Position;
 import com.example.stockportfolio.domain.Quantity;
 import com.example.stockportfolio.domain.Quote;
+import com.example.stockportfolio.domain.TickerMeta;
+import com.example.stockportfolio.domain.TickerMetaRepository;
 import com.example.stockportfolio.domain.Trade;
 import com.example.stockportfolio.domain.TradeType;
 
@@ -61,16 +63,19 @@ public class PortfolioApplicationService {
     private final PortfolioRepository repository;
     private final MarketDataPort marketDataPort;
     private final ExchangeResolver exchangeResolver;
+    private final TickerMetaRepository tickerMetaRepository;
     private final Clock clock;
     private final ExecutorService quoteFetchExecutor;
 
     public PortfolioApplicationService(PortfolioRepository repository,
                                        MarketDataPort marketDataPort,
                                        ExchangeResolver exchangeResolver,
+                                       TickerMetaRepository tickerMetaRepository,
                                        Clock clock) {
         this.repository = Objects.requireNonNull(repository, "repository");
         this.marketDataPort = Objects.requireNonNull(marketDataPort, "marketDataPort");
         this.exchangeResolver = Objects.requireNonNull(exchangeResolver, "exchangeResolver");
+        this.tickerMetaRepository = Objects.requireNonNull(tickerMetaRepository, "tickerMetaRepository");
         this.clock = Objects.requireNonNull(clock, "clock");
         this.quoteFetchExecutor = Executors.newFixedThreadPool(QUOTE_FETCH_POOL_SIZE, r -> {
             Thread t = new Thread(r, "quote-fetch");
@@ -85,7 +90,34 @@ public class PortfolioApplicationService {
         Trade trade = command.toTrade();
         current.apply(trade);
         repository.recordTrade(trade, current);
+        // 거래 트랜잭션 성공 후 sector 박제 — 별도 PutItem, best-effort.
+        // 거래 PUT 의 TransactWriteItems 와 분리되어 있어 sector 갱신 실패가 거래 자체를 깨뜨리지 않는다.
+        if (command.type() == TradeType.BUY && command.sector() != null && trade.ticker() != null) {
+            persistSectorBestEffort(trade.ticker(), command.sector());
+        }
         return trade;
+    }
+
+    /**
+     * BUY 거래 직후 ticker 의 META.sector 를 갱신한다.
+     * <ul>
+     *   <li>META 가 이미 있으면 sector 만 교체 후 save.</li>
+     *   <li>META 가 없으면 NAS 거래소로 임시 박제(sector 포함). 다음 view() 의 자기치유 흐름이
+     *       카운터 누적 후 재탐색으로 정확한 거래소로 정정한다 ({@link ExchangeResolver#onQuoteSuccess}
+     *       의 보수적 NAS 박제 패턴과 동일).</li>
+     * </ul>
+     * 어떤 예외도 호출자로 전파하지 않는다 (best-effort).
+     */
+    private void persistSectorBestEffort(String ticker, String sector) {
+        try {
+            Optional<TickerMeta> existing = tickerMetaRepository.find(ticker);
+            TickerMeta updated = existing
+                    .map(meta -> meta.withSector(sector))
+                    .orElseGet(() -> new TickerMeta(ticker, Exchange.NAS, clock.instant(), 0, sector));
+            tickerMetaRepository.save(updated);
+        } catch (RuntimeException ex) {
+            log.warn("sector 갱신 실패 ticker={} sector={} 무시하고 진행: {}", ticker, sector, ex.toString());
+        }
     }
 
     /**
@@ -320,11 +352,17 @@ public class PortfolioApplicationService {
                 .toList();
         // Quote 자체를 보관해 가격 외 보조 필드(등락률·52주 고저) 까지 PositionView 로 그대로 전파한다.
         Map<String, Quote> quoteByTicker = new ConcurrentHashMap<>();
+        // META.sector 도 동일 fetch 결과에서 추출해 보관 — 추가 GetItem 발생 안 함.
+        // 시세가 실패해도 META 가 잡혔다면 sector 는 노출 가능 (시세 실패 종목도 sector 별 그룹화에 활용).
+        Map<String, String> sectorByTicker = new ConcurrentHashMap<>();
         CompletableFuture<?>[] quoteFutures = sortedPositions.stream()
                 .map(p -> CompletableFuture.runAsync(() -> {
                     try {
-                        Exchange exchange = exchangeResolver.resolve(p.ticker());
-                        Quote quote = marketDataPort.getQuote(p.ticker(), exchange);
+                        TickerMeta meta = exchangeResolver.resolveWithMeta(p.ticker());
+                        if (meta.sector() != null) {
+                            sectorByTicker.put(p.ticker(), meta.sector());
+                        }
+                        Quote quote = marketDataPort.getQuote(p.ticker(), meta.exchange());
                         quoteByTicker.put(p.ticker(), quote);
                         exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
                     } catch (RuntimeException ex) {
@@ -412,7 +450,8 @@ public class PortfolioApplicationService {
                     dailyChangePct,
                     weekHigh52Usd,
                     weekLow52Usd,
-                    weekRangeRatio));
+                    weekRangeRatio,
+                    sectorByTicker.get(p.ticker())));
         }
 
         // 시세 실패 종목 + 미보유 종목의 누적배당도 전체 손익 합계에는 포함한다.

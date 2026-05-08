@@ -67,4 +67,39 @@ class TickerMetaTest {
         assertThat(after.lastVerifiedAt()).isEqualTo(T0);
         assertThat(after.consecutiveQuoteFailures()).isEqualTo(3);
     }
+
+    @Test
+    void sector_4인자_생성자는_null_로_채운다() {
+        TickerMeta meta = new TickerMeta("AAPL", Exchange.NAS, T0, 0);
+
+        assertThat(meta.sector()).isNull();
+    }
+
+    @Test
+    void sector_5인자_생성자는_그대로_보존한다() {
+        TickerMeta meta = new TickerMeta("AAPL", Exchange.NAS, T0, 0, "Big Tech");
+
+        assertThat(meta.sector()).isEqualTo("Big Tech");
+    }
+
+    @Test
+    void withSector는_sector_만_교체하고_나머지는_유지한다() {
+        TickerMeta before = new TickerMeta("AAPL", Exchange.NAS, T0, 2, "Old");
+
+        TickerMeta after = before.withSector("Big Tech");
+
+        assertThat(after.ticker()).isEqualTo("AAPL");
+        assertThat(after.exchange()).isEqualTo(Exchange.NAS);
+        assertThat(after.lastVerifiedAt()).isEqualTo(T0);
+        assertThat(after.consecutiveQuoteFailures()).isEqualTo(2);
+        assertThat(after.sector()).isEqualTo("Big Tech");
+    }
+
+    @Test
+    void withSuccess_와_withFailure_는_sector_를_보존한다() {
+        TickerMeta before = new TickerMeta("AAPL", Exchange.NAS, T0, 2, "Big Tech");
+
+        assertThat(before.withSuccess(Exchange.NYS, T1).sector()).isEqualTo("Big Tech");
+        assertThat(before.withFailure().sector()).isEqualTo("Big Tech");
+    }
 }

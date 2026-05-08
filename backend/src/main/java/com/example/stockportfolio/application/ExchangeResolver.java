@@ -58,12 +58,21 @@ public class ExchangeResolver {
      * 모든 거래소 탐색이 실패하면 마지막 예외를 throw 한다.
      */
     public Exchange resolve(String ticker) {
+        return resolveWithMeta(ticker).exchange();
+    }
+
+    /**
+     * {@link #resolve(String)} 와 동일하지만 결정에 사용된 META 자체를 반환한다.
+     * 호출자가 sector 등 보조 필드를 함께 사용해야 할 때 GetItem 중복을 막는다.
+     */
+    public TickerMeta resolveWithMeta(String ticker) {
         Optional<TickerMeta> existing = repository.find(ticker);
         if (existing.isPresent() && existing.get().consecutiveQuoteFailures() < FAILURE_THRESHOLD) {
-            return existing.get().exchange();
+            return existing.get();
         }
-        // META 미존재 또는 임계 이상 실패 — 탐색 수행.
-        return searchAndPersist(ticker);
+        // META 미존재 또는 임계 이상 실패 — 탐색 수행. searchAndPersist 가 새 META 를 박제하므로 다시 find 가능.
+        // 다만 추가 GetItem 을 피하기 위해 searchAndPersist 가 직접 META 를 반환하도록 한다.
+        return searchAndPersistMeta(ticker, existing.orElse(null));
     }
 
     /**
@@ -101,14 +110,20 @@ public class ExchangeResolver {
         repository.save(existing.get().withFailure());
     }
 
-    private Exchange searchAndPersist(String ticker) {
+    /**
+     * NAS → NYS → AMS 순으로 탐색해 첫 성공 거래소로 META 를 박제한다.
+     * 기존 META 가 있으면 sector 등 보조 필드를 보존해야 하므로 호출자가 넘겨준다.
+     */
+    private TickerMeta searchAndPersistMeta(String ticker, TickerMeta existing) {
         RuntimeException lastError = null;
         for (Exchange exchange : SEARCH_ORDER) {
             try {
                 marketDataPort.getQuote(ticker, exchange);
                 Instant now = clock.instant();
-                repository.save(new TickerMeta(ticker, exchange, now, 0));
-                return exchange;
+                String preservedSector = existing != null ? existing.sector() : null;
+                TickerMeta updated = new TickerMeta(ticker, exchange, now, 0, preservedSector);
+                repository.save(updated);
+                return updated;
             } catch (RuntimeException ex) {
                 log.debug("거래소 탐색 시 시세 실패 ticker={} exchange={}: {}", ticker, exchange, ex.toString());
                 lastError = ex;

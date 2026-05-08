@@ -1059,6 +1059,165 @@ class PortfolioApplicationServiceTest {
                 "메시지에 배당 키워드가 포함돼야 한다 (실제: " + ex.getMessage() + ")");
     }
 
+    // --- P1-9 sector ---
+
+    @Test
+    @DisplayName("BUY + sector non-null → 신규 ticker META 가 sector 와 함께 박제된다")
+    void recordTrade_buyWithSector_persistsNewMetaWithSector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, "Big Tech"));
+
+        TickerMeta saved = metaRepo.find("AAPL").orElseThrow();
+        assertEquals("Big Tech", saved.sector());
+    }
+
+    @Test
+    @DisplayName("BUY + sector null → 기존 META 의 sector 가 유지된다 (덮어쓰지 않음)")
+    void recordTrade_buyWithoutSector_preservesExistingSector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        // 기존 META: sector="Old"
+        metaRepo.save(new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-01-01T00:00:00Z"), 0, "Old"));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-02T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        // sector 미입력 BUY
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, null));
+
+        // sector 는 그대로 유지
+        TickerMeta meta = metaRepo.find("AAPL").orElseThrow();
+        assertEquals("Old", meta.sector());
+    }
+
+    @Test
+    @DisplayName("BUY + sector non-null → 기존 META 의 sector 가 새 값으로 갱신된다")
+    void recordTrade_buyWithSector_updatesExistingSector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        metaRepo.save(new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-01-01T00:00:00Z"), 0, "Old"));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-02T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, "Big Tech"));
+
+        TickerMeta meta = metaRepo.find("AAPL").orElseThrow();
+        assertEquals("Big Tech", meta.sector());
+        // exchange/lastVerifiedAt/카운터는 보존
+        assertEquals(Exchange.NAS, meta.exchange());
+    }
+
+    @Test
+    @DisplayName("SELL/DIVIDEND/DEPOSIT/WITHDRAW 의 sector 는 무시된다 (META 갱신 없음)")
+    void recordTrade_nonBuyTradesIgnoreSector() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        // 기존 META: sector="Big Tech"
+        metaRepo.save(new TickerMeta("AAPL", Exchange.NAS,
+                Instant.parse("2026-01-01T00:00:00Z"), 0, "Big Tech"));
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "150");
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        // 보유 만들기
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-02T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-03T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, null));
+
+        // SELL 에 sector="Other" 보내도 무시
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.SELL, Instant.parse("2026-01-04T00:00:00Z"),
+                "AAPL", new BigDecimal("1"), new BigDecimal("160"),
+                BigDecimal.ZERO, null, null, "Other"));
+
+        // DIVIDEND 도 마찬가지
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DIVIDEND, Instant.parse("2026-01-05T00:00:00Z"),
+                "AAPL", null, null, null, new BigDecimal("5"), null, "Other"));
+
+        // sector 는 BUY 시 박제된 값 그대로
+        assertEquals("Big Tech", metaRepo.find("AAPL").orElseThrow().sector());
+    }
+
+    @Test
+    @DisplayName("PositionView.sector: BUY 시 박제된 sector 가 view() 응답에 그대로 노출")
+    void view_propagatesSectorToPositionView() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, "Big Tech"));
+
+        PortfolioView view = service.view();
+        PositionView aapl = view.positions().stream()
+                .filter(p -> p.ticker().equals("AAPL")).findFirst().orElseThrow();
+        assertEquals("Big Tech", aapl.sector());
+    }
+
+    @Test
+    @DisplayName("PositionView.sector: META 가 없거나 sector null 이면 응답도 null")
+    void view_sectorNullWhenMetaAbsentOrSectorNull() {
+        FakeRepository repo = new FakeRepository();
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+
+        StubMarketData market = new StubMarketData(new BigDecimal("1400"));
+        market.put("AAPL", "200");
+        PortfolioApplicationService service = newServiceWithMetaRepo(repo, market, metaRepo);
+
+        // sector 미입력 BUY
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.DEPOSIT, Instant.parse("2026-01-01T00:00:00Z"),
+                null, null, null, null, new BigDecimal("10000"), null));
+        service.recordTrade(new RecordTradeCommand(
+                TradeType.BUY, Instant.parse("2026-01-02T00:00:00Z"),
+                "AAPL", new BigDecimal("10"), new BigDecimal("100"),
+                BigDecimal.ZERO, null, null, null));
+
+        PortfolioView view = service.view();
+        PositionView aapl = view.positions().stream()
+                .filter(p -> p.ticker().equals("AAPL")).findFirst().orElseThrow();
+        assertNull(aapl.sector());
+    }
+
     @Test
     @DisplayName("deleteTrade: WITHDRAW 삭제는 항상 안전 → 현금 회복")
     void deleteTrade_withdrawAlwaysAllowed() {
@@ -1104,10 +1263,20 @@ class PortfolioApplicationServiceTest {
     /**
      * 테스트 공용 팩토리 — 빈 META 저장소를 가진 ExchangeResolver 와 함께 서비스를 조립한다.
      * META 가 비어 있으면 resolver 가 NAS 부터 탐색하므로 StubMarketData 가 NAS 호출에 응답하면 된다.
+     * sector 갱신 검증을 위해 동일 META 저장소를 PortfolioApplicationService 에도 공유한다.
      */
     private static PortfolioApplicationService newService(FakeRepository repo, MarketDataPort market) {
-        ExchangeResolver resolver = new ExchangeResolver(market, new InMemoryTickerMetaRepository(), FIXED);
-        return new PortfolioApplicationService(repo, market, resolver, FIXED);
+        InMemoryTickerMetaRepository metaRepo = new InMemoryTickerMetaRepository();
+        ExchangeResolver resolver = new ExchangeResolver(market, metaRepo, FIXED);
+        return new PortfolioApplicationService(repo, market, resolver, metaRepo, FIXED);
+    }
+
+    /** META 저장소를 외부에서 주입해 sector 갱신 결과를 검증할 수 있는 변형. */
+    private static PortfolioApplicationService newServiceWithMetaRepo(FakeRepository repo,
+                                                                      MarketDataPort market,
+                                                                      InMemoryTickerMetaRepository metaRepo) {
+        ExchangeResolver resolver = new ExchangeResolver(market, metaRepo, FIXED);
+        return new PortfolioApplicationService(repo, market, resolver, metaRepo, FIXED);
     }
 
     /** 단순 ConcurrentHashMap 기반 META 저장소. 테스트 격리만 보장하면 충분. */

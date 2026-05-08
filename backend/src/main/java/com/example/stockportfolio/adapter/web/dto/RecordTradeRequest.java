@@ -16,6 +16,9 @@ import java.time.Instant;
  * type별 필수 필드는 RecordTradeCommand.toTrade() 단계에서 확인된다.
  *
  * memo 는 1차안에서 DEPOSIT/WITHDRAW UI 만 노출하지만, 모델은 모든 거래 종류에서 받을 수 있도록 둔다.
+ *
+ * sector 는 BUY UI 에서만 노출한다. BUY 외 거래 종류에 들어와도 application 계층에서 무시된다.
+ * 길이 검증(@Size)은 trim 전 raw 길이 — 실제 정규화 후 길이 검증은 RecordTradeCommand 가 담당.
  */
 public record RecordTradeRequest(
         @NotNull TradeType type,
@@ -25,10 +28,11 @@ public record RecordTradeRequest(
         @DecimalMin(value = "0", inclusive = false) BigDecimal price,
         @DecimalMin(value = "0") BigDecimal fee,
         @DecimalMin(value = "0", inclusive = false) BigDecimal cashAmount,
-        @Size(max = Trade.MEMO_MAX_LENGTH) String memo
+        @Size(max = Trade.MEMO_MAX_LENGTH) String memo,
+        @Size(max = RecordTradeCommand.SECTOR_MAX_LENGTH) String sector
 ) {
 
     public RecordTradeCommand toCommand() {
-        return new RecordTradeCommand(type, executedAt, ticker, qty, price, fee, cashAmount, memo);
+        return new RecordTradeCommand(type, executedAt, ticker, qty, price, fee, cashAmount, memo, sector);
     }
 }
