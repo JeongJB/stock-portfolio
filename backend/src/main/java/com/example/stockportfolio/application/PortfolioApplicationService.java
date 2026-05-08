@@ -298,10 +298,14 @@ public class PortfolioApplicationService {
         BigDecimal usdKrwRate = marketDataPort.getUsdKrwRate();
         OffsetDateTime asOf = OffsetDateTime.now(clock.withZone(KST));
 
-        // 0단계: ticker 별 누적 배당 합 — DIVIDEND 거래 전체를 한 번 순회.
-        // 매도 후 잔여 배당(보유 0) 케이스도 합계 손익에 포함되도록 보유 여부와 무관하게 집계한다.
+        // 거래 전체를 한 번만 fetch — DIVIDEND 누적·IRR cashflow 모두 인메모리에서 분기한다.
+        // (이전: listTradesByType(DIVIDEND) + IRR 안에서 DEPOSIT/WITHDRAW/DIVIDEND 3회 = 풀스캔 4회 — DIVIDEND 중복.)
+        List<Trade> allTrades = repository.listAllTrades();
+
+        // 0단계: ticker 별 누적 배당 합. 매도 후 잔여 배당(보유 0) 도 합계 손익에 포함되도록 보유 여부와 무관하게 집계한다.
         Map<String, BigDecimal> dividendsByTicker = new LinkedHashMap<>();
-        for (Trade t : repository.listTradesByType(TradeType.DIVIDEND)) {
+        for (Trade t : allTrades) {
+            if (t.type() != TradeType.DIVIDEND) continue;
             String ticker = t.ticker();
             Money amount = t.cashAmount();
             if (ticker == null || amount == null) continue;
@@ -426,7 +430,7 @@ public class PortfolioApplicationService {
         BigDecimal currentTotalUsd = totalMarketValueUsd.add(cashUsd);
         BigDecimal netPrincipalUsd = portfolio.principal().amount();
         BigDecimal simpleReturn = IrrCalculator.simpleReturn(currentTotalUsd, netPrincipalUsd).orElse(null);
-        BigDecimal irr = computeIrr(currentTotalUsd, asOf).orElse(null);
+        BigDecimal irr = computeIrr(allTrades, currentTotalUsd, asOf).orElse(null);
 
         return new PortfolioView(
                 cashUsd,
@@ -455,29 +459,23 @@ public class PortfolioApplicationService {
     }
 
     /**
-     * IRR 입력 현금흐름 시퀀스 생성 후 XIRR 호출.
+     * IRR 입력 현금흐름 시퀀스 생성 후 XIRR 호출. 호출자가 view() 진입 시 fetch 한 거래 리스트를 그대로 넘긴다.
      * - DEPOSIT: 음수(외부 → 포트폴리오 투입)
      * - WITHDRAW: 양수(포트폴리오 → 외부 회수)
      * - DIVIDEND: 양수(현금 입금)
      * - BUY/SELL 은 포트폴리오 내부 자산 형태 변경이므로 제외
      * - 마지막 시점(asOf)에 현재 총자산 USD 를 양수로 추가 ("지금 다 회수하면" 가치)
      */
-    private Optional<BigDecimal> computeIrr(BigDecimal currentTotalUsd, OffsetDateTime asOf) {
+    private Optional<BigDecimal> computeIrr(List<Trade> allTrades, BigDecimal currentTotalUsd, OffsetDateTime asOf) {
         List<IrrCalculator.CashFlow> flows = new ArrayList<>();
-        for (Trade t : repository.listTradesByType(TradeType.DEPOSIT)) {
+        for (Trade t : allTrades) {
             Money amount = t.cashAmount();
             if (amount == null) continue;
-            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount().negate()));
-        }
-        for (Trade t : repository.listTradesByType(TradeType.WITHDRAW)) {
-            Money amount = t.cashAmount();
-            if (amount == null) continue;
-            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount()));
-        }
-        for (Trade t : repository.listTradesByType(TradeType.DIVIDEND)) {
-            Money amount = t.cashAmount();
-            if (amount == null) continue;
-            flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount()));
+            switch (t.type()) {
+                case DEPOSIT -> flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount().negate()));
+                case WITHDRAW, DIVIDEND -> flows.add(new IrrCalculator.CashFlow(t.executedAt(), amount.amount()));
+                default -> {}
+            }
         }
         if (flows.isEmpty()) {
             return Optional.empty();

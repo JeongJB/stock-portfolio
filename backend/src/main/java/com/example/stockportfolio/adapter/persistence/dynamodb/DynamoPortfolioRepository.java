@@ -58,15 +58,18 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
         Money cumulativeDeposit = Money.zero(Currency.USD);
         Money cumulativeWithdraw = Money.zero(Currency.USD);
 
-        // 페이지네이션은 1인 사용자/포지션 수 적음 가정 하에 무시 (P0-2 범위)
-        QueryResponse response = client.query(QueryRequest.builder()
+        // SK 사전순(CASH# < META# < POSITION# < SNAPSHOT# < TRADE#)을 이용해 SNAPSHOT/TRADE 항목은
+        // 아예 읽지 않는다. 거래/스냅샷이 누적돼도 view() 비용이 포지션 수에만 비례하도록.
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
-                .keyConditionExpression("#pk = :pk")
-                .expressionAttributeNames(Map.of("#pk", PK))
-                .expressionAttributeValues(Map.of(":pk", AttributeValue.fromS(USER_PK)))
-                .build());
+                .keyConditionExpression("#pk = :pk AND #sk < :limit")
+                .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
+                .expressionAttributeValues(Map.of(
+                        ":pk", AttributeValue.fromS(USER_PK),
+                        ":limit", AttributeValue.fromS(SNAPSHOT_SK_PREFIX)))
+                .build();
 
-        for (Map<String, AttributeValue> item : response.items()) {
+        for (Map<String, AttributeValue> item : queryAllPages(baseRequest)) {
             String sk = item.get(SK).s();
             if (sk.startsWith(POSITION_SK_PREFIX)) {
                 Position p = DynamoAttributes.positionFromItem(item);
@@ -78,10 +81,27 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                 cumulativeDeposit = meta[0];
                 cumulativeWithdraw = meta[1];
             }
-            // TRADE# 아이템은 load에서 무시 (별도 listRecentTrades로 조회)
         }
 
         return new Portfolio(positions, cashUsd, cumulativeDeposit, cumulativeWithdraw);
+    }
+
+    /**
+     * 1MB 응답 한도를 넘는 Query 의 LastEvaluatedKey 페이지네이션을 모은다. 호출자는 조건이 SK 범위로
+     * 충분히 좁혀져 있는지 책임진다 (PK 전체 풀스캔에 그대로 쓰면 여전히 비싸다).
+     */
+    private List<Map<String, AttributeValue>> queryAllPages(QueryRequest baseRequest) {
+        List<Map<String, AttributeValue>> all = new ArrayList<>();
+        QueryRequest current = baseRequest;
+        while (true) {
+            QueryResponse response = client.query(current);
+            all.addAll(response.items());
+            Map<String, AttributeValue> lastKey = response.lastEvaluatedKey();
+            if (lastKey == null || lastKey.isEmpty()) {
+                return all;
+            }
+            current = current.toBuilder().exclusiveStartKey(lastKey).build();
+        }
     }
 
     @Override
@@ -155,7 +175,7 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
 
     @Override
     public List<Trade> listRecentTrades(int limit) {
-        QueryResponse response = client.query(QueryRequest.builder()
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
                 .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
                 .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
@@ -164,23 +184,14 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                         ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
                 .scanIndexForward(false)
                 .limit(limit)
-                .build());
+                .build();
 
-        List<Trade> trades = new ArrayList<>(response.items().size());
-        Set<String> seen = new HashSet<>();
-        for (Map<String, AttributeValue> item : response.items()) {
-            Trade t = DynamoAttributes.tradeFromItem(item);
-            if (seen.add(t.id())) {
-                trades.add(t);
-            }
-        }
-        return trades;
+        return tradesFromItems(queryUpTo(baseRequest, limit), null);
     }
 
     @Override
     public List<Trade> listAllTrades() {
-        // SK 오름차순(시간순) 으로 TRADE# prefix 전체 Query. 1인 사용자 가정 하에 페이지네이션 미적용.
-        QueryResponse response = client.query(QueryRequest.builder()
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
                 .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
                 .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
@@ -188,25 +199,17 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                         ":pk", AttributeValue.fromS(USER_PK),
                         ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
                 .scanIndexForward(true)
-                .build());
+                .build();
 
-        List<Trade> trades = new ArrayList<>(response.items().size());
-        Set<String> seen = new HashSet<>();
-        for (Map<String, AttributeValue> item : response.items()) {
-            Trade t = DynamoAttributes.tradeFromItem(item);
-            if (seen.add(t.id())) {
-                trades.add(t);
-            }
-        }
-        return trades;
+        return tradesFromItems(queryAllPages(baseRequest), null);
     }
 
     @Override
     public List<Trade> listTradesByType(TradeType type) {
         Objects.requireNonNull(type, "type");
-        // SK 오름차순(시간순) 으로 TRADE# prefix 전체 Query 후 type 필터.
-        // 1인 사용자 가정 하에 페이지네이션·서버측 필터 expression 없이 단순 클라이언트 필터.
-        QueryResponse response = client.query(QueryRequest.builder()
+        // 클라이언트 필터: TRADE# 전체를 페이지네이션으로 모은 뒤 type 일치만 추림.
+        // FilterExpression 으로 서버측 필터를 걸어도 RCU 는 전 항목 기준이라 비용 동일 → 단순화 우선.
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
                 .keyConditionExpression("#pk = :pk AND begins_with(#sk, :prefix)")
                 .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
@@ -214,23 +217,15 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                         ":pk", AttributeValue.fromS(USER_PK),
                         ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
                 .scanIndexForward(true)
-                .build());
+                .build();
 
-        List<Trade> trades = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (Map<String, AttributeValue> item : response.items()) {
-            Trade t = DynamoAttributes.tradeFromItem(item);
-            if (t.type() == type && seen.add(t.id())) {
-                trades.add(t);
-            }
-        }
-        return trades;
+        return tradesFromItems(queryAllPages(baseRequest), type);
     }
 
     @Override
     public List<Trade> listTradesByTicker(String ticker, int limit) {
         Objects.requireNonNull(ticker, "ticker");
-        QueryResponse response = client.query(QueryRequest.builder()
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
                 .indexName("GSI1")
                 .keyConditionExpression("#gpk = :gpk AND begins_with(#gsk, :prefix)")
@@ -240,17 +235,47 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                         ":prefix", AttributeValue.fromS(TRADE_SK_PREFIX)))
                 .scanIndexForward(false)
                 .limit(limit)
-                .build());
+                .build();
 
-        List<Trade> trades = new ArrayList<>(response.items().size());
+        return tradesFromItems(queryUpTo(baseRequest, limit), null);
+    }
+
+    /**
+     * Query 결과 항목들을 Trade 로 매핑하고, typeFilter 가 null 이 아니면 해당 type 만 추린다.
+     * 같은 tradeId 가 (이론상 발생하지 않지만) 중복 등장하면 첫 항목만 채택.
+     */
+    private static List<Trade> tradesFromItems(List<Map<String, AttributeValue>> items, TradeType typeFilter) {
+        List<Trade> trades = new ArrayList<>(items.size());
         Set<String> seen = new HashSet<>();
-        for (Map<String, AttributeValue> item : response.items()) {
+        for (Map<String, AttributeValue> item : items) {
             Trade t = DynamoAttributes.tradeFromItem(item);
+            if (typeFilter != null && t.type() != typeFilter) continue;
             if (seen.add(t.id())) {
                 trades.add(t);
             }
         }
         return trades;
+    }
+
+    /**
+     * limit 까지 결과가 모일 때까지 페이지네이션. DynamoDB 의 .limit() 은 평가 항목 수라 첫 응답이
+     * 부족하게 올 수 있어 LastEvaluatedKey 가 남아 있으면 추가 fetch.
+     */
+    private List<Map<String, AttributeValue>> queryUpTo(QueryRequest baseRequest, int limit) {
+        List<Map<String, AttributeValue>> all = new ArrayList<>();
+        QueryRequest current = baseRequest;
+        while (true) {
+            QueryResponse response = client.query(current);
+            for (Map<String, AttributeValue> item : response.items()) {
+                all.add(item);
+                if (all.size() >= limit) return all;
+            }
+            Map<String, AttributeValue> lastKey = response.lastEvaluatedKey();
+            if (lastKey == null || lastKey.isEmpty()) {
+                return all;
+            }
+            current = current.toBuilder().exclusiveStartKey(lastKey).build();
+        }
     }
 
     @Override
@@ -343,7 +368,7 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
         Objects.requireNonNull(from, "from");
         Objects.requireNonNull(to, "to");
         // SK BETWEEN — DynamoDB는 inclusive 양쪽. 오름차순 스캔으로 자연스러운 시계열 정렬.
-        QueryResponse response = client.query(QueryRequest.builder()
+        QueryRequest baseRequest = QueryRequest.builder()
                 .tableName(tableName)
                 .keyConditionExpression("#pk = :pk AND #sk BETWEEN :from AND :to")
                 .expressionAttributeNames(Map.of("#pk", PK, "#sk", SK))
@@ -352,10 +377,11 @@ public final class DynamoPortfolioRepository implements PortfolioRepository {
                         ":from", AttributeValue.fromS(SNAPSHOT_SK_PREFIX + from.toString()),
                         ":to", AttributeValue.fromS(SNAPSHOT_SK_PREFIX + to.toString())))
                 .scanIndexForward(true)
-                .build());
+                .build();
 
-        List<SnapshotView> snapshots = new ArrayList<>(response.items().size());
-        for (Map<String, AttributeValue> item : response.items()) {
+        List<Map<String, AttributeValue>> items = queryAllPages(baseRequest);
+        List<SnapshotView> snapshots = new ArrayList<>(items.size());
+        for (Map<String, AttributeValue> item : items) {
             snapshots.add(DynamoAttributes.snapshotFromItem(item));
         }
         return snapshots;
