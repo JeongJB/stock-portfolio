@@ -159,9 +159,10 @@ time curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" -o /dev/null
 ### CloudFormation/리소스 상태 확인
 
 1. CloudFormation 콘솔 → `stock-portfolio` 스택이 `UPDATE_COMPLETE` 상태인지.
-2. Lambda 콘솔 → `stock-portfolio-prod-api` 함수의 Runtime/Handler/메모리/타임아웃 확인.
+2. Lambda 콘솔 → `stock-portfolio-prod-api` 함수의 Runtime/Handler/메모리/타임아웃 + **Reserved concurrency = 1** (또는 `LambdaReservedConcurrency` override 값) 확인.
 3. API Gateway 콘솔 → REST API `stock-portfolio-prod` 의 stage `prod`, `/api/{proxy+}` ANY 메서드, API key required 켜짐 확인.
-4. Usage plan `stock-portfolio-prod-usage-plan` → throttle/quota 값 확인.
+4. Usage plan `stock-portfolio-prod-usage-plan` → throttle/quota 값 확인 (디폴트 5 RPS / burst 10 / 일 2000).
+5. Budgets 콘솔 → `stock-portfolio-prod-monthly-budget` 가 active 상태이고 첫 ACTUAL 데이터가 채워졌는지 (며칠 걸릴 수 있음). "Receive Billing Alerts" 활성 여부도 Account → Billing preferences 에서 1회 확인.
 
 ## FE-5c 프론트엔드 빌드 + 배포
 

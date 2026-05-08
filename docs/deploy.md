@@ -71,6 +71,21 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 - Lambda + API Gateway + DynamoDB + S3 + CloudFront 합계 **월 $0~1**
 - 도메인 미사용 (`*.cloudfront.net` 기본 도메인)
 - 한투 OpenAPI 호출비 별도 (현재 무료 한도 내)
+- **AWS Budgets 월 $5 한도** + ACTUAL 80% / FORECASTED 100% 이메일 알림 (`AlarmEmail` 파라미터로 동일 주소 사용). 평소 비용의 5배에 도달하면 메일이 옴 → 비용 폭주 조기 감지.
+  - **첫 배포 후 1회**: AWS Billing console (Account → Billing preferences) 에서 "Receive Billing Alerts" 가 활성인지 확인. 비활성이면 ACTUAL 메트릭이 publish 되지 않아 알림이 동작하지 않음.
+
+## 보안·비용 가드레일 layer (WAF 미사용)
+
+비용 0 으로 brute force·L7 flood·비용 폭주를 막는 4-layer:
+
+| Layer | 메커니즘 | 디폴트 |
+|---|---|---|
+| L1 GeoRestriction | CloudFront 가 KR 외 IP 차단 | KR-only |
+| L2 Basic Auth | CloudFront Function 의 sha256 게이트 | SSM SecureString 보관 |
+| L3 API Gateway throttle/quota | Usage plan + API key | 5 RPS / burst 10 / 일 2000 |
+| L4 Lambda Reserved Concurrency | 동시 실행 상한으로 비용 폭주 차단 | 1 |
+
+`ApiThrottleRateLimit / ApiThrottleBurstLimit / ApiQuotaPerDay / LambdaReservedConcurrency / MonthlyBudgetUsd` 파라미터 override 로 즉시 조정 가능.
 
 ## 트러블슈팅 (실제 겪은 것 위주)
 
@@ -86,6 +101,9 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 | `aws-sam-cli-managed-default` 첫 생성 실패 | S3 또는 IAM 권한 부족 | IAM 사용자에 권한 추가 후 재시도 |
 | `LogGroup ... already exists` | Lambda 가 첫 호출 시 자동 생성한 로그 그룹과 CFN 정의 충돌 | `aws logs delete-log-group --log-group-name /aws/lambda/stock-portfolio-prod-api --region $REGION` 후 `sam deploy` 재시도 |
 | 알람 메일이 오지 않음 | SNS email 구독이 PendingConfirmation 상태 | `surpatience@gmail.com` 받은편지함에서 "Confirm subscription" 링크 클릭 (스팸함도 확인) |
+| 정상 사용 중 갑자기 `429 Too Many Requests` | Usage plan throttle 5 RPS / burst 10 한도 초과 (대개 두 탭 동시 새로고침 또는 단기간 query 폭) | 일시적 — 잠시 후 자동 회복. 자주 발생하면 `ApiThrottleBurstLimit` 만 15~20 으로 올려 redeploy |
+| 두 탭에서 동시 새로고침 시 한쪽이 느림 | `LambdaReservedConcurrency=1` 로 동시 실행 1개 캡 | 의도된 동작 (비용 폭주 방어). 거슬리면 파라미터를 2 로 올림 |
+| Budgets 알림이 안 옴 | AWS Billing console 의 "Receive Billing Alerts" 비활성 또는 EMAIL subscription 미확인 | Billing console 에서 활성화 + `AlarmEmail` 받은편지함에서 첫 알림 확인 |
 
 ## 프론트엔드 Basic Auth ID/PW 변경
 
