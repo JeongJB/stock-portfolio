@@ -193,8 +193,6 @@ class PortfolioApplicationServiceTest {
         assertEquals(new BigDecimal("2800000.0000"), snapshot.totalMarketValueKrw());
         assertEquals(new BigDecimal("500.0000"), snapshot.cashUsd());
         assertEquals(new BigDecimal("1500.0000"), snapshot.principalUsd());
-        assertEquals(1, snapshot.positions().size());
-        assertEquals("AAPL", snapshot.positions().get(0).ticker());
 
         // 저장됐는지 확인
         assertEquals(1, repo.snapshots.size());
@@ -227,7 +225,7 @@ class PortfolioApplicationServiceTest {
     }
 
     @Test
-    @DisplayName("takeSnapshot: 빈 포트폴리오에서도 0/빈 positions로 박제한다")
+    @DisplayName("takeSnapshot: 빈 포트폴리오도 합계 0 으로 박제한다")
     void takeSnapshot_emptyPortfolio() {
         FakeRepository repo = new FakeRepository();
         repo.set(new Portfolio());
@@ -238,7 +236,6 @@ class PortfolioApplicationServiceTest {
         assertEquals(new BigDecimal("0.0000"), snapshot.cashUsd());
         assertEquals(new BigDecimal("0.0000"), snapshot.principalUsd());
         assertEquals(new BigDecimal("0.0000"), snapshot.totalMarketValueUsd());
-        assertTrue(snapshot.positions().isEmpty());
     }
 
     @Test
@@ -1092,8 +1089,7 @@ class PortfolioApplicationServiceTest {
                 LocalDate.parse(isoDate),
                 java.time.OffsetDateTime.parse(isoDate + "T09:00:00+09:00"),
                 new BigDecimal("1400"),
-                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
-                List.of());
+                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero);
     }
 
     private static Portfolio buildPortfolio(Map<String, Position> positions,

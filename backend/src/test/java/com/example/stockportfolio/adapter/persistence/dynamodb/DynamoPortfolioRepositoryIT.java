@@ -1,6 +1,5 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
-import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.DomainException;
@@ -211,9 +210,6 @@ class DynamoPortfolioRepositoryIT {
         assertThat(loaded.date()).isEqualTo(LocalDate.parse("2026-04-28"));
         assertThat(loaded.usdKrwRate()).isEqualByComparingTo(new BigDecimal("1400"));
         assertThat(loaded.totalMarketValueUsd()).isEqualByComparingTo(new BigDecimal("2000.0000"));
-        assertThat(loaded.positions()).hasSize(1);
-        assertThat(loaded.positions().get(0).ticker()).isEqualTo("AAPL");
-        assertThat(loaded.positions().get(0).qty()).isEqualByComparingTo(new BigDecimal("10"));
     }
 
     @Test
@@ -268,20 +264,7 @@ class DynamoPortfolioRepositoryIT {
                 new BigDecimal("1000.0000"),
                 new BigDecimal("1400000.0000"),
                 totalAssetsUsd,
-                totalAssetsKrw,
-                List.of(new PositionView(
-                        "AAPL",
-                        new BigDecimal("10"),
-                        new BigDecimal("100.0000"),
-                        new BigDecimal("140000.0000"),
-                        new BigDecimal("0.0000"),
-                        new BigDecimal("200.0000"),
-                        new BigDecimal("280000.0000"),
-                        new BigDecimal("2000.0000"),
-                        new BigDecimal("2800000.0000"),
-                        new BigDecimal("0.800000"),
-                        new BigDecimal("1000.0000"),
-                        new BigDecimal("1400000.0000"))));
+                totalAssetsKrw);
     }
 
     @Test

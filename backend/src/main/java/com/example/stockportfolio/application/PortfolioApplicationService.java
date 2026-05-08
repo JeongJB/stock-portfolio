@@ -557,8 +557,7 @@ public class PortfolioApplicationService {
                 view.totalUnrealizedPnlUsd(),
                 view.totalUnrealizedPnlKrw(),
                 view.totalAssetsUsd(),
-                view.totalAssetsKrw(),
-                view.positions());
+                view.totalAssetsKrw());
         repository.saveSnapshot(snapshot);
         return snapshot;
     }

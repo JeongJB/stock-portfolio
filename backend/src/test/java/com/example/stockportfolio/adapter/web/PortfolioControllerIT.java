@@ -383,9 +383,8 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.totalMarketValueUsd").value("2000.0000"))
                 .andExpect(jsonPath("$.totalCostBasisUsd").value("1500.0000"))
                 .andExpect(jsonPath("$.totalUnrealizedPnlUsd").value("500.0000"))
-                .andExpect(jsonPath("$.positions", hasSize(1)))
-                .andExpect(jsonPath("$.positions[0].ticker").value("AAPL"))
-                .andExpect(jsonPath("$.positions[0].marketValueUsd").value("2000.0000"));
+                // 박제 응답에 종목 상세(positions)는 포함하지 않는다 — 박제 사이즈 절감 결정.
+                .andExpect(jsonPath("$.positions").doesNotExist());
     }
 
     @Test
@@ -395,7 +394,7 @@ class PortfolioControllerIT {
                 .andExpect(jsonPath("$.cashUsd").value("0.0000"))
                 .andExpect(jsonPath("$.principalUsd").value("0.0000"))
                 .andExpect(jsonPath("$.totalMarketValueUsd").value("0.0000"))
-                .andExpect(jsonPath("$.positions", hasSize(0)));
+                .andExpect(jsonPath("$.positions").doesNotExist());
     }
 
     @Test
@@ -546,8 +545,7 @@ class PortfolioControllerIT {
                 java.time.LocalDate.parse(date),
                 java.time.OffsetDateTime.parse(date + "T09:00:00+09:00"),
                 new java.math.BigDecimal("1400"),
-                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero,
-                java.util.List.of());
+                zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero, zero);
     }
 
 }

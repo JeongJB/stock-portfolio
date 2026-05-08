@@ -1,7 +1,6 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
 import com.example.stockportfolio.adapter.marketdata.kis.KisAccessTokenStore;
-import com.example.stockportfolio.adapter.web.dto.PositionView;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
 import com.example.stockportfolio.domain.Exchange;
@@ -14,10 +13,6 @@ import com.example.stockportfolio.domain.TradeType;
 
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
-
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -25,9 +20,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -60,9 +53,6 @@ final class DynamoAttributes {
     static final int QUOTE_SLOT_MINUTES = 10;
     private static final DateTimeFormatter QUOTE_SLOT_FORMAT =
             DateTimeFormatter.ofPattern("yyyyMMddHHmm").withZone(KST);
-
-    // positions 직렬화 전용. JSON 컬럼만 다루므로 모듈 추가는 불필요.
-    private static final ObjectMapper SNAPSHOT_MAPPER = JsonMapper.builder().build();
 
     private DynamoAttributes() {}
 
@@ -211,7 +201,6 @@ final class DynamoAttributes {
         item.put("totalCostBasisKrw", n(snapshot.totalCostBasisKrw()));
         item.put("totalUnrealizedPnlUsd", n(snapshot.totalUnrealizedPnlUsd()));
         item.put("totalUnrealizedPnlKrw", n(snapshot.totalUnrealizedPnlKrw()));
-        item.put("positions", s(serializePositions(snapshot.positions())));
         return item;
     }
 
@@ -238,67 +227,7 @@ final class DynamoAttributes {
                 new BigDecimal(item.get("totalUnrealizedPnlUsd").n()),
                 new BigDecimal(item.get("totalUnrealizedPnlKrw").n()),
                 totalAssetsUsd,
-                totalAssetsKrw,
-                deserializePositions(item.get("positions").s()));
-    }
-
-    private static String serializePositions(List<PositionView> positions) {
-        // PositionView 필드는 BigDecimal — 박제 후 환율 변경에도 일관성 유지를 위해 toPlainString으로 보존.
-        List<Map<String, Object>> raw = new ArrayList<>(positions.size());
-        for (PositionView p : positions) {
-            Map<String, Object> entry = new HashMap<>();
-            entry.put("ticker", p.ticker());
-            entry.put("qty", toPlain(p.qty()));
-            entry.put("avgCostUsd", toPlain(p.avgCostUsd()));
-            entry.put("avgCostKrw", toPlain(p.avgCostKrw()));
-            entry.put("realizedPnlUsd", toPlain(p.realizedPnlUsd()));
-            entry.put("lastPriceUsd", toPlain(p.lastPriceUsd()));
-            entry.put("lastPriceKrw", toPlain(p.lastPriceKrw()));
-            entry.put("marketValueUsd", toPlain(p.marketValueUsd()));
-            entry.put("marketValueKrw", toPlain(p.marketValueKrw()));
-            entry.put("weight", toPlain(p.weight()));
-            entry.put("unrealizedPnlUsd", toPlain(p.unrealizedPnlUsd()));
-            entry.put("unrealizedPnlKrw", toPlain(p.unrealizedPnlKrw()));
-            raw.add(entry);
-        }
-        try {
-            return SNAPSHOT_MAPPER.writeValueAsString(raw);
-        } catch (JacksonException e) {
-            throw new IllegalStateException("스냅샷 positions 직렬화 실패", e);
-        }
-    }
-
-    private static List<PositionView> deserializePositions(String json) {
-        try {
-            List<Map<String, Object>> raw = SNAPSHOT_MAPPER.readValue(json, new tools.jackson.core.type.TypeReference<>() {});
-            List<PositionView> result = new ArrayList<>(raw.size());
-            for (Map<String, Object> entry : raw) {
-                result.add(new PositionView(
-                        (String) entry.get("ticker"),
-                        toDecimal(entry.get("qty")),
-                        toDecimal(entry.get("avgCostUsd")),
-                        toDecimal(entry.get("avgCostKrw")),
-                        toDecimal(entry.get("realizedPnlUsd")),
-                        toDecimal(entry.get("lastPriceUsd")),
-                        toDecimal(entry.get("lastPriceKrw")),
-                        toDecimal(entry.get("marketValueUsd")),
-                        toDecimal(entry.get("marketValueKrw")),
-                        toDecimal(entry.get("weight")),
-                        toDecimal(entry.get("unrealizedPnlUsd")),
-                        toDecimal(entry.get("unrealizedPnlKrw"))));
-            }
-            return result;
-        } catch (JacksonException e) {
-            throw new IllegalStateException("스냅샷 positions 역직렬화 실패", e);
-        }
-    }
-
-    private static String toPlain(BigDecimal v) {
-        return v == null ? null : v.toPlainString();
-    }
-
-    private static BigDecimal toDecimal(Object v) {
-        return v == null ? null : new BigDecimal(v.toString());
+                totalAssetsKrw);
     }
 
     static String tickerPk(String ticker) {

@@ -76,7 +76,6 @@ export interface SnapshotView {
   totalUnrealizedPnlKrw: string
   totalAssetsUsd: string
   totalAssetsKrw: string
-  positions: PositionView[]
 }
 
 export interface SnapshotListResponse {
