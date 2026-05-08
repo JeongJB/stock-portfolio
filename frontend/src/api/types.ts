@@ -28,6 +28,8 @@ export interface PositionView {
   weekHigh52Usd: string | null
   weekLow52Usd: string | null
   weekRangeRatio: string | null
+  // P1-9: BUY 시 사용자가 자유 입력한 분류 라벨. 옛 종목·미입력은 null.
+  sector?: string | null
 }
 
 export interface PortfolioView {
@@ -107,6 +109,8 @@ export interface RecordTradeRequest {
   fee?: string
   cashAmount?: string
   memo?: string
+  // P1-9: BUY 거래에서만 의미 있는 자유 입력 분류 라벨. 다른 거래 종류는 보내지 않는다 (서버는 무시).
+  sector?: string
 }
 
 export interface RecordTradeResponse {

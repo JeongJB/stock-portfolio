@@ -21,6 +21,7 @@ interface FormFields {
   fee: string
   cashAmount: string
   memo: string
+  sector: string
 }
 
 const EMPTY_FIELDS: FormFields = {
@@ -30,9 +31,11 @@ const EMPTY_FIELDS: FormFields = {
   fee: '',
   cashAmount: '',
   memo: '',
+  sector: '',
 }
 
 const MEMO_MAX_LENGTH = 200
+const SECTOR_MAX_LENGTH = 30
 
 // 양의 십진수만 허용. 빈 문자열은 OK(미입력 상태).
 const DECIMAL_RE = /^\d*\.?\d*$/
@@ -63,7 +66,7 @@ export function TradeForm() {
     mutationFn: recordTrade,
     onSuccess: () => {
       showToast('거래가 기록되었습니다', 'success')
-      // ticker는 보존하고 금액·memo 필드만 비운다(연속 입력 편의).
+      // ticker/sector 는 보존하고 금액·memo 필드만 비운다(연속 입력 편의).
       setFields((prev) => ({
         ticker: prev.ticker,
         qty: '',
@@ -71,6 +74,7 @@ export function TradeForm() {
         fee: '',
         cashAmount: '',
         memo: '',
+        sector: prev.sector,
       }))
       setErrorMessage(null)
       void queryClient.invalidateQueries({ queryKey: ['portfolio'] })
@@ -81,6 +85,15 @@ export function TradeForm() {
       setErrorMessage(err.message)
     },
   })
+
+  // 보유 종목의 distinct sector 목록 (BUY 탭의 datalist 옵션). 빈 값/null 은 제외.
+  const sectorSuggestions = Array.from(
+    new Set(
+      positions
+        .map((p) => p.sector)
+        .filter((s): s is string => typeof s === 'string' && s.trim().length > 0),
+    ),
+  ).sort()
 
   const handleTypeChange = (next: TradeType) => {
     if (next === type) return
@@ -110,8 +123,26 @@ export function TradeForm() {
       setFields((prev) => ({ ...prev, memo: clipped }))
       return
     }
+    if (key === 'sector') {
+      // 30자 초과는 클라이언트에서 잘라낸다.
+      const clipped = raw.length > SECTOR_MAX_LENGTH ? raw.slice(0, SECTOR_MAX_LENGTH) : raw
+      setFields((prev) => ({ ...prev, sector: clipped }))
+      return
+    }
     if (raw !== '' && !DECIMAL_RE.test(raw)) return
     setFields((prev) => ({ ...prev, [key]: raw }))
+  }
+
+  // ticker 가 보유 종목과 일치하면 sector 를 그 종목 값으로 pre-fill (사용자가 이미 입력한 sector 가 있으면 덮어쓰지 않음).
+  // BUY 탭에서만 의미 있음 — SELL/DIVIDEND 등 sector 미노출 탭에서는 fields.sector 가 사용되지 않는다.
+  const prefillSectorFromOwnedTicker = (ticker: string) => {
+    if (!ticker) return
+    const match = positions.find(
+      (p) => p.ticker.toUpperCase() === ticker.toUpperCase(),
+    )
+    const matchSector = match?.sector
+    if (typeof matchSector !== 'string' || matchSector.trim().length === 0) return
+    setFields((prev) => (prev.sector ? prev : { ...prev, sector: matchSector }))
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -134,6 +165,11 @@ export function TradeForm() {
       if (fields.qty) req.qty = fields.qty
       if (fields.price) req.price = fields.price
       if (fields.fee) req.fee = fields.fee
+      // sector 는 BUY 탭에서만 페이로드에 포함. SELL 은 무관.
+      if (type === 'BUY') {
+        const trimmedSector = fields.sector.trim()
+        if (trimmedSector) req.sector = trimmedSector
+      }
     } else if (isDividend(type)) {
       if (fields.ticker.trim()) req.ticker = fields.ticker.trim()
       if (fields.cashAmount) req.cashAmount = fields.cashAmount
@@ -171,6 +207,7 @@ export function TradeForm() {
                 label="티커"
                 value={fields.ticker}
                 onChange={(v) => handleFieldChange('ticker', v)}
+                onBlur={() => prefillSectorFromOwnedTicker(fields.ticker)}
                 placeholder="예: AAPL"
                 autoComplete="off"
                 disabled={isPending}
@@ -179,7 +216,11 @@ export function TradeForm() {
               <FieldPositionSelect
                 label="보유 종목"
                 value={fields.ticker}
-                onChange={(v) => handleFieldChange('ticker', v)}
+                onChange={(v) => {
+                  handleFieldChange('ticker', v)
+                  // 보유 종목 dropdown 은 선택 즉시 sector pre-fill (사용자 추가 액션 없이 합리적 기본값 제공).
+                  prefillSectorFromOwnedTicker(v)
+                }}
                 positions={positions}
                 disabled={isPending}
                 loading={positionsLoading}
@@ -208,6 +249,13 @@ export function TradeForm() {
               onChange={(v) => handleFieldChange('fee', v)}
               placeholder="0.00"
               disabled={isPending}
+            />
+            <FieldSector
+              value={fields.sector}
+              onChange={(v) => handleFieldChange('sector', v)}
+              suggestions={sectorSuggestions}
+              disabled={isPending}
+              maxLength={SECTOR_MAX_LENGTH}
             />
           </>
         ) : type === 'SELL' ? (
@@ -405,6 +453,7 @@ function FieldText({
   label,
   value,
   onChange,
+  onBlur,
   placeholder,
   autoComplete,
   disabled,
@@ -412,6 +461,7 @@ function FieldText({
   label: string
   value: string
   onChange: (v: string) => void
+  onBlur?: () => void
   placeholder?: string
   autoComplete?: string
   disabled?: boolean
@@ -423,11 +473,56 @@ function FieldText({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={placeholder}
         autoComplete={autoComplete}
         disabled={disabled}
         className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono tabular-nums text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
       />
+    </label>
+  )
+}
+
+function FieldSector({
+  value,
+  onChange,
+  suggestions,
+  disabled,
+  maxLength,
+}: {
+  value: string
+  onChange: (v: string) => void
+  suggestions: string[]
+  disabled?: boolean
+  maxLength: number
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+      <span className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+        <span>분류 (선택, 최대 {maxLength}자)</span>
+        <span className="text-xs text-slate-400 dark:text-slate-500">
+          {value.length}/{maxLength}
+        </span>
+      </span>
+      <input
+        type="text"
+        list="sector-suggestions"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="예: Big Tech, 반도체, 고배당"
+        autoComplete="off"
+        maxLength={maxLength}
+        disabled={disabled}
+        className="rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
+      />
+      <datalist id="sector-suggestions">
+        {suggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+      <span className="text-xs text-slate-500 dark:text-slate-400">
+        비워두면 기존 분류 유지. 새 종목은 미지정 상태.
+      </span>
     </label>
   )
 }
