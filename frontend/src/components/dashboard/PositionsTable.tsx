@@ -42,7 +42,6 @@ export function PositionsTable({ positions }: Props) {
         <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
           <tr>
             <Th align="left">티커</Th>
-            <Th>수량</Th>
             <Th>당일</Th>
             <Th>수익률</Th>
             <Th>평가액 ({unit})</Th>
@@ -175,6 +174,10 @@ function Row({
                 onMouseLeave={scheduleClose}
               >
                 <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                  <dt className="text-slate-500 dark:text-slate-400">수량</dt>
+                  <dd className="text-right tabular-nums text-slate-700 dark:text-slate-200">
+                    {formatQty(position.qty)}
+                  </dd>
                   <dt className="text-slate-500 dark:text-slate-400">평단</dt>
                   <dd className="text-right tabular-nums text-slate-700 dark:text-slate-200">
                     {formatMoney(avgCost, currency)}
@@ -189,7 +192,6 @@ function Row({
             )
           : null}
       </Td>
-      <Td>{formatQty(position.qty)}</Td>
       <Td className={changePctColorClass(position.dailyChangePct)}>
         {formatChangePct(position.dailyChangePct)}
       </Td>
