@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Java 25 (Corretto)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: corretto
           java-version: 25
@@ -44,14 +44,14 @@ jobs:
         run: backend/gradlew -p backend shadowJar
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ap-northeast-2
           audience: sts.amazonaws.com
 
       - name: Setup AWS SAM CLI
-        uses: aws-actions/setup-sam@v2
+        uses: aws-actions/setup-sam@v3
         with:
           use-installer: true
 
