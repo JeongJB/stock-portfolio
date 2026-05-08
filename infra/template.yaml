@@ -31,16 +31,31 @@ Parameters:
     Description: Lambda 타임아웃 (초). API Gateway REST API 의 29초 한계와 정렬.
   ApiThrottleRateLimit:
     Type: Number
-    Default: 10
-    Description: Usage plan 의 정상 RPS. 1인용엔 충분.
+    Default: 5
+    Description: >-
+      Usage plan 의 정상 RPS. 1인 정상 사용은 1초 1~2 요청 미만이라 5 면 차고 넘치고,
+      brute force/L7 flood 는 즉시 throttle 되어 Lambda 도달 못 함.
   ApiThrottleBurstLimit:
     Type: Number
-    Default: 20
-    Description: Usage plan 의 burst 한도.
+    Default: 10
+    Description: Usage plan 의 burst 한도. 페이지 진입 시 동시 호출 흡수용.
   ApiQuotaPerDay:
     Type: Number
-    Default: 5000
-    Description: Usage plan 의 1일 quota.
+    Default: 2000
+    Description: >-
+      Usage plan 의 1일 quota. 1인 일 평균 호출 5~50회 대비 100배 여유 + 공격 24h 자동 정지 안전망.
+  LambdaReservedConcurrency:
+    Type: Number
+    Default: 1
+    Description: >-
+      Lambda 동시 실행 상한. 1인용엔 1 이면 충분하며, 공격 시 비용 폭주를 절대값으로 막는 안전망.
+      본인이 여러 탭 동시 사용 시 약간의 직렬화 발생 가능 — 거슬리면 2 로 올리면 됨.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 5
+    Description: >-
+      AWS Budgets 월 예산(USD). 1인용 평소 비용은 < $1/월 이라 5 USD 도 평소의 5배 임계.
+      ACTUAL 80% 도달 시 + FORECASTED 100% 초과 예측 시 이메일 통지.
   FrontendBucketName:
     Type: String
     Default: ''
@@ -204,6 +219,9 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: !Ref LambdaMemoryMb
       Timeout: !Ref LambdaTimeoutSeconds
+      # 동시 실행 상한 — 1인용 + 비용 폭주 안전망. UsagePlan throttle 이 1차 차단,
+      # 그래도 뚫리는 패턴이 있어도 동시 인스턴스 수가 capped 라 Lambda 청구가 절대 폭주 못 함.
+      ReservedConcurrentExecutions: !Ref LambdaReservedConcurrency
       Environment:
         Variables:
           TZ: Asia/Seoul
@@ -296,6 +314,40 @@ Resources:
         - !Ref AlarmTopic
       OKActions:
         - !Ref AlarmTopic
+
+  # 비용 폭주 감지용 AWS Budgets — region-agnostic 글로벌 서비스라 ap-northeast-2 스택에서
+  # 그대로 정의 가능 (CloudWatch Billing 메트릭은 us-east-1 전용이라 별도 스택 필요 — 이쪽이 더 간단).
+  # 알림 채널은 SNS 가 아닌 직접 EMAIL 구독 — Budgets→SNS 는 토픽 정책에 budgets.amazonaws.com 허용을
+  # 추가해야 해서 1인용엔 EMAIL 이 단순. AlarmEmail 파라미터 재사용.
+  BillingBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub stock-portfolio-${Stage}-monthly-budget
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        # 실제 비용이 임계 80% 도달 시 — 평소 < $1 이므로 ~$4 즈음.
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlarmEmail
+        # 월말 예측이 한도 초과로 잡히면 즉시 통지 — 폭주 초기 단계 포착.
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlarmEmail
 
   # === FE-5c: 프론트엔드 정적 호스팅 ===
   # 비공개 S3 + CloudFront + OAC (OAI 는 deprecated). 커스텀 도메인 없음.
