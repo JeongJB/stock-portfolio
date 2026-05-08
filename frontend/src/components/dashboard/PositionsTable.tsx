@@ -6,15 +6,19 @@ import {
   formatMoney,
   formatQty,
   formatSignedMoney,
+  maskedMoney,
+  maskedSignedMoney,
   pnlColorClass,
 } from '../../app/format'
 import { WeekRangeBar } from './WeekRangeBar'
 
 interface Props {
   positions: PositionView[]
+  /** 평가액 / 평가손익 컬럼만 가린다. 티커 popover, 당일/수익률/52주 위치는 영향 없음. */
+  masked?: boolean
 }
 
-export function PositionsTable({ positions }: Props) {
+export function PositionsTable({ positions, masked = false }: Props) {
   const { currency } = useCurrency()
   const unit = currency === 'USD' ? 'USD' : 'KRW'
 
@@ -51,7 +55,7 @@ export function PositionsTable({ positions }: Props) {
         </thead>
         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
           {sorted.map((p) => (
-            <Row key={p.ticker} position={p} currency={currency} />
+            <Row key={p.ticker} position={p} currency={currency} masked={masked} />
           ))}
         </tbody>
       </table>
@@ -62,9 +66,11 @@ export function PositionsTable({ positions }: Props) {
 function Row({
   position,
   currency,
+  masked,
 }: {
   position: PositionView
   currency: 'USD' | 'KRW'
+  masked: boolean
 }) {
   const isUsd = currency === 'USD'
   const avgCost = isUsd ? position.avgCostUsd : position.avgCostKrw
@@ -198,9 +204,19 @@ function Row({
       <Td className={changePctColorClass(totalReturnPct)}>
         {formatChangePct(totalReturnPct)}
       </Td>
-      <Td>{quoteFailed ? '—' : formatMoney(marketValue, currency)}</Td>
+      <Td>
+        {quoteFailed
+          ? '—'
+          : masked
+            ? maskedMoney(currency)
+            : formatMoney(marketValue, currency)}
+      </Td>
       <Td className={quoteFailed ? '' : pnlColorClass(pnl)}>
-        {quoteFailed ? '—' : formatSignedMoney(pnl, currency)}
+        {quoteFailed
+          ? '—'
+          : masked
+            ? maskedSignedMoney(currency)
+            : formatSignedMoney(pnl, currency)}
       </Td>
       <Td className="min-w-35">
         <WeekRangeBar

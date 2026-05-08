@@ -4,6 +4,8 @@ import { getPortfolio } from '../api/client'
 import { SummaryCards } from '../components/dashboard/SummaryCards'
 import { AllocationTreemap } from '../components/dashboard/AllocationTreemap'
 import { PositionsTable } from '../components/dashboard/PositionsTable'
+import { AmountMaskToggle } from '../components/dashboard/AmountMaskToggle'
+import { useAmountMask } from '../components/dashboard/useAmountMask'
 import { exportElementAsPng } from '../app/exportImage'
 import { formatKstDate } from '../app/format'
 import { useToast } from '../app/toastContext'
@@ -17,6 +19,7 @@ export function Dashboard() {
   const captureRef = useRef<HTMLDivElement>(null)
   const [exporting, setExporting] = useState(false)
   const { showToast } = useToast()
+  const { masked, toggle: toggleMask } = useAmountMask()
 
   const handleExport = async () => {
     if (!captureRef.current || exporting) return
@@ -57,7 +60,8 @@ export function Dashboard() {
 
   return (
     <div ref={captureRef} className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <AmountMaskToggle masked={masked} onToggle={toggleMask} />
         <button
           type="button"
           onClick={handleExport}
@@ -68,9 +72,9 @@ export function Dashboard() {
           {exporting ? '저장 중...' : '이미지로 저장'}
         </button>
       </div>
-      <SummaryCards data={data} />
+      <SummaryCards data={data} masked={masked} />
       <AllocationTreemap data={data} />
-      <PositionsTable positions={data.positions} />
+      <PositionsTable positions={data.positions} masked={masked} />
     </div>
   )
 }

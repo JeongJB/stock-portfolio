@@ -7,14 +7,18 @@ import {
   formatRelativeMinutes,
   formatSignedMoney,
   formatSignedPercent,
+  maskedMoney,
+  maskedSignedMoney,
   pnlColorClass,
 } from '../../app/format'
 
 interface Props {
   data: PortfolioView
+  /** 평가액·원금·평가손익·현금 같은 절대 금액을 가린다. IRR/단순 수익률(%) 은 영향 없음. */
+  masked?: boolean
 }
 
-export function SummaryCards({ data }: Props) {
+export function SummaryCards({ data, masked = false }: Props) {
   const { currency } = useCurrency()
 
   const totalAssets = currency === 'USD' ? data.totalAssetsUsd : data.totalAssetsKrw
@@ -23,15 +27,20 @@ export function SummaryCards({ data }: Props) {
   const pnl = currency === 'USD' ? data.totalUnrealizedPnlUsd : data.totalUnrealizedPnlKrw
   const cash = currency === 'USD' ? data.cashUsd : data.cashKrw
 
+  const fmtMoney = (v: string | null | undefined) =>
+    masked ? maskedMoney(currency) : formatMoney(v, currency)
+  const fmtSigned = (v: string | null | undefined) =>
+    masked ? maskedSignedMoney(currency) : formatSignedMoney(v, currency)
+
   return (
     <section className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">
-        <Card label="총액 (현금+평가액)" value={formatMoney(totalAssets, currency)} />
-        <Card label="평가액" value={formatMoney(marketValue, currency)} />
-        <Card label="원금" value={formatMoney(principal, currency)} />
+        <Card label="총액 (현금+평가액)" value={fmtMoney(totalAssets)} />
+        <Card label="평가액" value={fmtMoney(marketValue)} />
+        <Card label="원금" value={fmtMoney(principal)} />
         <Card
           label="평가손익"
-          value={formatSignedMoney(pnl, currency)}
+          value={fmtSigned(pnl)}
           valueClass={pnlColorClass(pnl)}
         />
         <Card
@@ -47,7 +56,7 @@ export function SummaryCards({ data }: Props) {
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
         <span>
-          현금: <span className="text-slate-700 dark:text-slate-200">{formatMoney(cash, currency)}</span>
+          현금: <span className="text-slate-700 dark:text-slate-200">{fmtMoney(cash)}</span>
         </span>
         <span>
           USD/KRW: <span className="text-slate-700 dark:text-slate-200">{formatRate(data.usdKrwRate)}</span>

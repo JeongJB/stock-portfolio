@@ -50,6 +50,18 @@ export function formatMoney(value: string | null | undefined, currency: Currency
   return `${symbol}${fmt.format(n)}`
 }
 
+// 캡처 공유 시 자릿수 추측을 막기 위해 고정 길이 4 점 마스킹. 통화 기호만 보존.
+const MASK = '••••'
+
+export function maskedMoney(currency: Currency): string {
+  return `${currency === 'USD' ? '$' : '₩'}${MASK}`
+}
+
+// 평가손익 등 부호 포함 금액의 마스킹. 부호도 가린다 (양/음 자체가 노출이라 불완전 마스킹이 됨).
+export function maskedSignedMoney(currency: Currency): string {
+  return `${currency === 'USD' ? '$' : '₩'}${MASK}`
+}
+
 // 부호 포함(평가손익용). +$123.45 / -₩1,234
 export function formatSignedMoney(
   value: string | null | undefined,
