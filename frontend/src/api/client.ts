@@ -59,3 +59,23 @@ export function listSnapshots(from?: string, to?: string): Promise<SnapshotListR
   const qs = params.toString()
   return request<SnapshotListResponse>(`/api/snapshots${qs ? `?${qs}` : ''}`)
 }
+
+// P1-9 보강: 보유 종목의 sector 단일 변경. sector=null 또는 빈 문자열은 분류 제거를 의미한다.
+// 응답: { ticker: "AAPL", sector: "Big Tech" | null }
+export interface UpdateSectorResponse {
+  ticker: string
+  sector: string | null
+}
+
+export function updateSector(
+  ticker: string,
+  sector: string | null,
+): Promise<UpdateSectorResponse> {
+  return request<UpdateSectorResponse>(
+    `/api/positions/${encodeURIComponent(ticker)}/sector`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ sector }),
+    },
+  )
+}

@@ -16,6 +16,9 @@ const History = lazy(() =>
   import('./pages/History').then((m) => ({ default: m.History })),
 )
 const Pnl = lazy(() => import('./pages/Pnl').then((m) => ({ default: m.Pnl })))
+const Sectors = lazy(() =>
+  import('./pages/Sectors').then((m) => ({ default: m.Sectors })),
+)
 
 const navLinkClass = ({ isActive }: { isActive: boolean }) =>
   isActive
@@ -47,6 +50,9 @@ export default function App() {
             <NavLink to="/history" className={navLinkClass}>
               거래 내역
             </NavLink>
+            <NavLink to="/sectors" className={navLinkClass}>
+              분류
+            </NavLink>
             <NavLink to="/pnl" className={navLinkClass}>
               손익
             </NavLink>
@@ -64,6 +70,7 @@ export default function App() {
             <Route path="/trades" element={<Trades />} />
             <Route path="/snapshots" element={<Snapshots />} />
             <Route path="/history" element={<History />} />
+            <Route path="/sectors" element={<Sectors />} />
             <Route path="/pnl" element={<Pnl />} />
           </Routes>
         </Suspense>
