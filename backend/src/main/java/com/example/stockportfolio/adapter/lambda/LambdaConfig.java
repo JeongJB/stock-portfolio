@@ -2,12 +2,14 @@ package com.example.stockportfolio.adapter.lambda;
 
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
+import com.example.stockportfolio.adapter.web.PortfolioController;
 import com.example.stockportfolio.adapter.web.dto.PortfolioView;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeRequest;
 import com.example.stockportfolio.adapter.web.dto.RecordTradeResponse;
 import com.example.stockportfolio.adapter.web.dto.SnapshotListResponse;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.application.PortfolioApplicationService;
+import com.example.stockportfolio.application.SectorValidator;
 import com.example.stockportfolio.application.TradeReplayValidationException;
 import com.example.stockportfolio.domain.DomainException;
 import com.example.stockportfolio.domain.Trade;
@@ -103,6 +105,28 @@ public class LambdaConfig {
                         return ok(mapper.writeValueAsString(service.view()));
                     }
                 }
+                if ("PATCH".equalsIgnoreCase(method)) {
+                    // PATCH /api/positions/{ticker}/sector — Spring MVC 컨트롤러와 동일 정책.
+                    // 라우팅이 두 곳(여기 + PortfolioController)에 중복 존재 — 새 endpoint 추가 시
+                    // 둘 다 손대지 않으면 Lambda 환경에서 404 가 난다 (line 33-35 주석의 ServerlessMVC
+                    // 통합이 이뤄지면 해소될 burden).
+                    String ticker = extractSectorTickerOrNull(path);
+                    if (ticker != null) {
+                        PortfolioController.UpdateSectorRequest req = mapper.readValue(
+                                event.getBody() != null ? event.getBody() : "{}",
+                                PortfolioController.UpdateSectorRequest.class);
+                        String normalized;
+                        try {
+                            normalized = SectorValidator.normalize(req == null ? null : req.sector());
+                        } catch (IllegalArgumentException ex) {
+                            return validationFailed(ex.getMessage());
+                        }
+                        String upperTicker = ticker.toUpperCase(java.util.Locale.ROOT);
+                        String saved = service.updateSector(upperTicker, normalized);
+                        return ok(mapper.writeValueAsString(
+                                new PortfolioController.UpdateSectorResponse(upperTicker, saved)));
+                    }
+                }
 
                 return notFound(path);
             } catch (NoSuchElementException ex) {
@@ -162,6 +186,23 @@ public class LambdaConfig {
         String id = path.substring(idx + "/api/trades/".length());
         if (id.isBlank() || id.contains("/")) return null;
         return URLDecoder.decode(id, StandardCharsets.UTF_8);
+    }
+
+    /**
+     * /api/positions/{ticker}/sector 패턴에서 ticker 만 뽑는다. 다른 경로면 null.
+     */
+    private static String extractSectorTickerOrNull(String path) {
+        if (path == null) return null;
+        int idx = path.indexOf("/api/positions/");
+        if (idx < 0) return null;
+        String tail = path.substring(idx + "/api/positions/".length());
+        int slash = tail.indexOf('/');
+        if (slash < 0) return null;
+        String ticker = tail.substring(0, slash);
+        String rest = tail.substring(slash);
+        if (!"/sector".equals(rest)) return null;
+        if (ticker.isBlank()) return null;
+        return URLDecoder.decode(ticker, StandardCharsets.UTF_8);
     }
 
     private static APIGatewayProxyResponseEvent serverError(Exception ex) {
