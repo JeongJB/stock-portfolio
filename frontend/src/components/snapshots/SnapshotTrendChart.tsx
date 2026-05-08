@@ -142,7 +142,7 @@ function compactNumber(n: number, currency: 'USD' | 'KRW'): string {
   if (!Number.isFinite(n)) return ''
   const abs = Math.abs(n)
   if (currency === 'KRW') {
-    if (abs >= 1_0000_0000) return `${(n / 1_0000_0000).toFixed(1)}억`
+    if (abs >= 1_0000_0000) return `${(n / 1_0000_0000).toFixed(2)}억`
     if (abs >= 1_0000) return `${(n / 1_0000).toFixed(0)}만`
     return n.toFixed(0)
   }
