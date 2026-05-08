@@ -98,7 +98,10 @@
         "lambda:GetPolicy",
         "lambda:TagResource",
         "lambda:UntagResource",
-        "lambda:ListTags"
+        "lambda:ListTags",
+        "lambda:PutFunctionConcurrency",
+        "lambda:DeleteFunctionConcurrency",
+        "lambda:GetFunctionConcurrency"
       ],
       "Resource": [
         "arn:aws:lambda:ap-northeast-2:<ACCOUNT_ID>:function:stock-portfolio-*"
@@ -260,6 +263,18 @@
         "cloudfront:ListInvalidations"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "BudgetsManage",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:CreateBudget",
+        "budgets:ModifyBudget",
+        "budgets:DescribeBudget",
+        "budgets:ViewBudget",
+        "budgets:DeleteBudget"
+      ],
+      "Resource": "arn:aws:budgets::<ACCOUNT_ID>:budget/stock-portfolio-*"
     }
   ]
 }
