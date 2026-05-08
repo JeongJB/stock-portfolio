@@ -83,9 +83,35 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 | L1 GeoRestriction | CloudFront 가 KR 외 IP 차단 | KR-only |
 | L2 Basic Auth | CloudFront Function 의 sha256 게이트 | SSM SecureString 보관 |
 | L3 API Gateway throttle/quota | Usage plan + API key | 5 RPS / burst 10 / 일 2000 |
-| L4 Lambda Reserved Concurrency | 동시 실행 상한으로 비용 폭주 차단 | 1 |
+| L4 Lambda Reserved Concurrency | 동시 실행 상한으로 비용 폭주 차단 | **0 (비활성)** — 한도 증액 후 1 로 |
 
 `ApiThrottleRateLimit / ApiThrottleBurstLimit / ApiQuotaPerDay / LambdaReservedConcurrency / MonthlyBudgetUsd` 파라미터 override 로 즉시 조정 가능.
+
+### Lambda Reserved Concurrency 활성화 (1회 작업)
+
+신규 AWS 계정의 Lambda concurrent execution quota 가 10 으로 묶여 있어 `ReservedConcurrentExecutions=1` 적용이 거부된다. 한도 증액 절차:
+
+```bash
+aws service-quotas request-service-quota-increase \
+  --service-code lambda \
+  --quota-code L-B99A9384 \
+  --desired-value 1000 \
+  --region ap-northeast-2
+
+# 진행 상태
+aws service-quotas list-requested-service-quota-change-history-by-quota \
+  --service-code lambda \
+  --quota-code L-B99A9384 \
+  --region ap-northeast-2
+```
+
+승인 후 `LambdaReservedConcurrency=1` 로 deploy:
+
+```bash
+sam deploy --parameter-overrides LambdaReservedConcurrency=1 \
+  --no-confirm-changeset --region ap-northeast-2
+# 또는 template 의 Default 를 1 로 영구 변경 후 infra/deploy.sh
+```
 
 ## 트러블슈팅 (실제 겪은 것 위주)
 
@@ -102,7 +128,8 @@ curl -sH "x-api-key: $API_KEY" "$API_URL/api/portfolio" | jq
 | `LogGroup ... already exists` | Lambda 가 첫 호출 시 자동 생성한 로그 그룹과 CFN 정의 충돌 | `aws logs delete-log-group --log-group-name /aws/lambda/stock-portfolio-prod-api --region $REGION` 후 `sam deploy` 재시도 |
 | 알람 메일이 오지 않음 | SNS email 구독이 PendingConfirmation 상태 | `surpatience@gmail.com` 받은편지함에서 "Confirm subscription" 링크 클릭 (스팸함도 확인) |
 | 정상 사용 중 갑자기 `429 Too Many Requests` | Usage plan throttle 5 RPS / burst 10 한도 초과 (대개 두 탭 동시 새로고침 또는 단기간 query 폭) | 일시적 — 잠시 후 자동 회복. 자주 발생하면 `ApiThrottleBurstLimit` 만 15~20 으로 올려 redeploy |
-| 두 탭에서 동시 새로고침 시 한쪽이 느림 | `LambdaReservedConcurrency=1` 로 동시 실행 1개 캡 | 의도된 동작 (비용 폭주 방어). 거슬리면 파라미터를 2 로 올림 |
+| `Specified ReservedConcurrentExecutions ... below its minimum value of [10]` | 신규 AWS 계정 Lambda quota 10 인 상태에서 reserved 1 적용 시 unreserved 9 < AWS hard floor 10 → 거부 | `LambdaReservedConcurrency=0` (디폴트) 로 일단 우회. Service Quotas 에서 Lambda concurrent executions 1000 증액 신청 후 1 로 활성화 |
+| `UPDATE_ROLLBACK_FAILED` 상태에 갇힘 | 직전 deploy 실패 + 자동 rollback 도 IAM 권한 부족 등으로 실패 | `aws cloudformation continue-update-rollback --stack-name stock-portfolio` (권한 보강 후). 그래도 막히면 `--resources-to-skip <LogicalId>` 로 마지막 카드 |
 | Budgets 알림이 안 옴 | AWS Billing console 의 "Receive Billing Alerts" 비활성 또는 EMAIL subscription 미확인 | Billing console 에서 활성화 + `AlarmEmail` 받은편지함에서 첫 알림 확인 |
 
 ## 프론트엔드 Basic Auth ID/PW 변경
