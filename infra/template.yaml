@@ -170,6 +170,7 @@ Resources:
                   - dynamodb:BatchWriteItem
                   - dynamodb:TransactWriteItems
                   - dynamodb:ConditionCheckItem
+                  - dynamodb:DescribeTable
                 Resource:
                   - !GetAtt PortfolioTable.Arn
                   - !Sub ${PortfolioTable.Arn}/index/GSI1
