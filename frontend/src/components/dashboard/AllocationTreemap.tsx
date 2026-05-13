@@ -36,7 +36,7 @@ const TICKER_COLORS = [
   '#475569', // slate-600
 ]
 
-type AllocationMode = 'ticker' | 'sector'
+type AllocationMode = 'ticker' | 'sector' | 'ticker-no-cash'
 
 const ALLOCATION_MODE_KEY = 'allocation-mode'
 const SECTOR_UNCLASSIFIED = '분류 미지정'
@@ -47,7 +47,9 @@ function loadInitialMode(): AllocationMode {
   if (typeof window === 'undefined') return 'ticker'
   try {
     const v = window.localStorage.getItem(ALLOCATION_MODE_KEY)
-    return v === 'sector' ? 'sector' : 'ticker'
+    return v === 'sector' ? 'sector' :
+        v === 'ticker-no-cash' ? 'ticker-no-cash' :
+        'ticker'
   } catch {
     return 'ticker'
   }
@@ -65,7 +67,7 @@ export function AllocationTreemap({ data }: Props) {
     }
   }, [mode])
 
-  const slices = mode === 'sector' ? buildSectorSlices(data, currency) : buildTickerSlices(data, currency)
+  const slices = mode === 'sector' ? buildSectorSlices(data, currency) : buildTickerSlices(data, currency, mode !== 'ticker-no-cash')
 
   if (slices.length === 0) {
     return (
@@ -146,6 +148,7 @@ function Header({
         {(
           [
             { value: 'ticker' as AllocationMode, label: '종목별' },
+            { value: 'ticker-no-cash' as AllocationMode, label: '종목별(현금 제외)' },
             { value: 'sector' as AllocationMode, label: 'sector별' },
           ]
         ).map(({ value, label }) => {
@@ -172,8 +175,8 @@ function Header({
   )
 }
 
-function buildTickerSlices(data: PortfolioView, currency: 'USD' | 'KRW'): Slice[] {
-  const positionSlices: Slice[] = data.positions
+function buildTickerSlices(data: PortfolioView, currency: 'USD' | 'KRW', includeCash: boolean): Slice[] {
+  const rawPositionSlices: Slice[] = data.positions
     .filter((p) => p.weight != null && Number(p.weight) > 0)
     .map((p) => ({
       name: p.ticker,
@@ -181,9 +184,18 @@ function buildTickerSlices(data: PortfolioView, currency: 'USD' | 'KRW'): Slice[
       marketValue: currency === 'USD' ? p.marketValueUsd : p.marketValueKrw,
     }))
 
+  const positionWeightSum = rawPositionSlices.reduce((sum, s) => sum + s.weight, 0)
+  const positionSlices: Slice[] =
+      includeCash || !Number.isFinite(positionWeightSum) || positionWeightSum <= 0
+          ? rawPositionSlices
+          : rawPositionSlices.map((s) => ({
+            ...s,
+            weight: (s.weight / positionWeightSum) * 100,
+          }))
+
   const cashWeight = Number(data.cashWeight)
   const cashSlice: Slice | null =
-    Number.isFinite(cashWeight) && cashWeight > 0
+    includeCash && Number.isFinite(cashWeight) && cashWeight > 0
       ? {
           name: CASH_LABEL_TICKER,
           weight: cashWeight,
