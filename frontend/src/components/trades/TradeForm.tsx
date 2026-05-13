@@ -133,7 +133,7 @@ export function TradeForm() {
     setFields((prev) => ({ ...prev, [key]: raw }))
   }
 
-  // ticker 가 보유 종목과 일치하면 sector 를 그 종목 값으로 pre-fill (사용자가 이미 입력한 sector 가 있으면 덮어쓰지 않음).
+  // ticker 가 보유 종목과 일치하면 sector 를 그 종목 값으로 pre-fill
   // BUY 탭에서만 의미 있음 — SELL/DIVIDEND 등 sector 미노출 탭에서는 fields.sector 가 사용되지 않는다.
   const prefillSectorFromOwnedTicker = (ticker: string) => {
     if (!ticker) return
@@ -142,7 +142,7 @@ export function TradeForm() {
     )
     const matchSector = match?.sector
     if (typeof matchSector !== 'string' || matchSector.trim().length === 0) return
-    setFields((prev) => (prev.sector ? prev : { ...prev, sector: matchSector }))
+    setFields((prev) => ({ ...prev, sector: matchSector }))
   }
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
