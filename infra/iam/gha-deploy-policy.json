@@ -101,7 +101,12 @@
         "lambda:ListTags",
         "lambda:PutFunctionConcurrency",
         "lambda:DeleteFunctionConcurrency",
-        "lambda:GetFunctionConcurrency"
+        "lambda:GetFunctionConcurrency",
+        "lambda:ListAliases",
+        "lambda:GetAlias",
+        "lambda:CreateAlias",
+        "lambda:DeleteAlias",
+        "lambda:UpdateAlias"
       ],
       "Resource": [
         "arn:aws:lambda:ap-northeast-2:<ACCOUNT_ID>:function:stock-portfolio-*"
