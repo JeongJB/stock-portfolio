@@ -351,13 +351,19 @@ public class PortfolioApplicationService {
     }
 
     public PortfolioView view() {
+        // [임시 진단용 timing 로그] SnapStart 콜드 첫 호출의 5.8초가 어느 단계에서 소비되는지
+        // 분해하기 위함. 측정 후 제거하거나 DEBUG 레벨로 낮춘다.
+        long tStart = System.currentTimeMillis();
         Portfolio portfolio = repository.load();
+        long tAfterLoad = System.currentTimeMillis();
         BigDecimal usdKrwRate = marketDataPort.getUsdKrwRate();
+        long tAfterFx = System.currentTimeMillis();
         OffsetDateTime asOf = OffsetDateTime.now(clock.withZone(KST));
 
         // 거래 전체를 한 번만 fetch — DIVIDEND 누적·IRR cashflow 모두 인메모리에서 분기한다.
         // (이전: listTradesByType(DIVIDEND) + IRR 안에서 DEPOSIT/WITHDRAW/DIVIDEND 3회 = 풀스캔 4회 — DIVIDEND 중복.)
         List<Trade> allTrades = repository.listAllTrades();
+        long tAfterTrades = System.currentTimeMillis();
 
         // 0단계: ticker 별 누적 배당 합. 매도 후 잔여 배당(보유 0) 도 합계 손익에 포함되도록 보유 여부와 무관하게 집계한다.
         Map<String, BigDecimal> dividendsByTicker = new LinkedHashMap<>();
@@ -397,6 +403,7 @@ public class PortfolioApplicationService {
                 }, quoteFetchExecutor))
                 .toArray(CompletableFuture<?>[]::new);
         CompletableFuture.allOf(quoteFutures).join();
+        long tAfterQuotes = System.currentTimeMillis();
 
         // 시세 기준 시각 = 종목별 Quote.asOf 의 최솟값. 시세 0개일 때 null.
         // 가장 오래된 슬롯을 노출해야 사용자가 "가장 stale 한 데이터" 기준을 본다.
@@ -495,6 +502,17 @@ public class PortfolioApplicationService {
         BigDecimal netPrincipalUsd = portfolio.principal().amount();
         BigDecimal simpleReturn = IrrCalculator.simpleReturn(currentTotalUsd, netPrincipalUsd).orElse(null);
         BigDecimal irr = computeIrr(allTrades, currentTotalUsd, asOf).orElse(null);
+        long tEnd = System.currentTimeMillis();
+
+        // [임시 진단용] view() 의 각 단계 소요 시간. 콜드 첫 호출의 병목 분포 측정용.
+        log.info("view timing: load={}ms fxRate={}ms listTrades={}ms quotes(parallel,{}pos)={}ms postProcess={}ms total={}ms",
+                tAfterLoad - tStart,
+                tAfterFx - tAfterLoad,
+                tAfterTrades - tAfterFx,
+                sortedPositions.size(),
+                tAfterQuotes - tAfterTrades,
+                tEnd - tAfterQuotes,
+                tEnd - tStart);
 
         return new PortfolioView(
                 cashUsd,
