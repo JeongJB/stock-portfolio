@@ -107,6 +107,28 @@ sam deploy --parameter-overrides LambdaReservedConcurrency=0 \
   --no-confirm-changeset --region ap-northeast-2
 ```
 
+## Lambda SnapStart
+
+콜드 스타트 5~10s → 1~2s 단축을 위해 SnapStart 가 활성화돼 있다 (`SnapStart: ApplyOn: PublishedVersions` + `AutoPublishAlias: live`).
+
+- 매 배포에서 SAM 이 자동으로 새 버전 발행 → snapshot 생성 → `live` alias 갱신 → API Gateway integration 과 Lambda permission 까지 alias ARN 으로 박는다.
+- 함수 코드/설정 변경이 없는 배포는 새 버전 발행 자체를 건너뛰어 snapshot 재생성 비용 없음.
+- **첫 SnapStart 활성화 배포만** snapshot 빌드로 평소보다 5~15분 더 걸린다. 이후 배포는 정상.
+- snapshot 상태 확인:
+
+  ```bash
+  aws lambda get-function \
+    --function-name stock-portfolio-prod-api \
+    --qualifier live \
+    --region $REGION \
+    --query 'Configuration.SnapStart'
+  # ApplyOn=PublishedVersions, OptimizationStatus=On 이어야 정상.
+  ```
+
+- 임시로 SnapStart 끄고 싶다면 template `SnapStart.ApplyOn` 을 `None` 으로 바꿔 deploy. AutoPublishAlias 는 그대로 둬도 무해 (alias 만 새 버전 가리킴).
+- snapshot 은 14일 idle 시 자동 폐기되며 다음 호출에서 자동 재생성 — 1인용 빈도에선 무관.
+- **롤백**: git revert + `infra/deploy.sh` 만으로 충분. alias 가 자동으로 직전 안정 버전을 가리킨다.
+
 ## 트러블슈팅 (실제 겪은 것 위주)
 
 | 증상 | 원인 | 처방 |
@@ -117,7 +139,7 @@ sam deploy --parameter-overrides LambdaReservedConcurrency=0 \
 | Lambda `No auto configuration classes found in ... AutoConfiguration.imports` | shadow plugin 9.x 의 transformer DSL 한계로 spring imports 가 덮어써짐 | `build.gradle` 의 `doLast` 가 `META-INF/spring/*.imports` 를 라인 병합 — 이미 적용됨 |
 | DynamoDB `Query condition missed key schema element: PK` | 코드는 소문자 `pk/sk`, template KeySchema 가 대문자였던 케이스 불일치 | template KeySchema 가 소문자 `pk/sk/gsi1pk/gsi1sk` 인지 확인 — 이미 적용됨 |
 | 브라우저 CORS error | `Method: ANY` 가 OPTIONS preflight 까지 잡아 ApiKeyRequired 적용 → 403 | OPTIONS 만 별도 라우트 + `ApiKeyRequired: false` 로 분리 — 이미 적용됨 |
-| Lambda 첫 호출 5~10초 느림 | Spring Boot 4 + SCF 콜드 스타트 | 1인용 수용. SnapStart 적용은 P2 보류 |
+| Lambda 첫 호출이 여전히 5~10초 느림 | SnapStart 가 활성화돼 있어도 직전 배포에서 새 버전이 발행되지 않았거나 (코드/설정 무변경) snapshot 재사용이 아직 안 된 케이스 | 평소: 1~2s 대로 단축됨. 첫 SnapStart 활성 배포 직후엔 snapshot 빌드 5~15분 진행 중일 수 있다. `aws lambda get-function --function-name stock-portfolio-prod-api --qualifier live` 로 `SnapStart.OptimizationStatus=On` 인지 확인 |
 | `aws-sam-cli-managed-default` 첫 생성 실패 | S3 또는 IAM 권한 부족 | IAM 사용자에 권한 추가 후 재시도 |
 | `LogGroup ... already exists` | Lambda 가 첫 호출 시 자동 생성한 로그 그룹과 CFN 정의 충돌 | `aws logs delete-log-group --log-group-name /aws/lambda/stock-portfolio-prod-api --region $REGION` 후 `sam deploy` 재시도 |
 | 알람 메일이 오지 않음 | SNS email 구독이 PendingConfirmation 상태 | `surpatience@gmail.com` 받은편지함에서 "Confirm subscription" 링크 클릭 (스팸함도 확인) |

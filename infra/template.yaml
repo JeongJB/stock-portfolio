@@ -223,6 +223,16 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       MemorySize: !Ref LambdaMemoryMb
       Timeout: !Ref LambdaTimeoutSeconds
+      # Lambda SnapStart — init 단계에서 부팅된 Spring 컨텍스트를 snapshot 으로 박제해
+      # 콜드 스타트 5~10s → 1~2s 대로 단축. PublishedVersions 만 SnapStart 활성화되므로
+      # AutoPublishAlias 로 매 배포마다 새 버전 발행 + 'live' alias 갱신. SAM 이 자동으로
+      # API Gateway integration 과 Lambda permission 을 alias ARN 으로 박는다.
+      # 함수 코드/설정 변경이 없는 배포는 새 버전 발행을 건너뛰므로 snapshot 재생성 비용 없음.
+      # SnapStart 비활성화 시 첫 SnapStart 활성 배포는 snapshot 빌드로 평소보다 5~15분
+      # 더 걸린다 (이후 배포는 정상).
+      SnapStart:
+        ApplyOn: PublishedVersions
+      AutoPublishAlias: live
       # 동시 실행 상한 — 1인용 + 비용 폭주 안전망. UsagePlan throttle 이 1차 차단,
       # 그래도 뚫리는 패턴이 있어도 동시 인스턴스 수가 capped 라 Lambda 청구가 절대 폭주 못 함.
       # 파라미터가 0 이면 속성 자체를 부재시켜 unreserved pool 사용 (AWS 신규 계정 한도 10
