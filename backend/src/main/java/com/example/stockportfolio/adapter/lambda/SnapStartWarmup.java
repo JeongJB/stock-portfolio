@@ -1,10 +1,10 @@
 package com.example.stockportfolio.adapter.lambda;
 
+import jakarta.annotation.PostConstruct;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
-import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -17,16 +17,18 @@ import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
  *
  * <p>측정 근거: timing 로그로 view() 분해 시 SnapStart restore 후 첫 호출이
  * load=3004ms / fxRate=2475ms / quotes(8 parallel)=757ms 였다. load 와 fxRate 의 첫 호출 페널티가
- * 두 SDK 의 lazy init 1회 비용. 같은 instance 의 두 번째 호출은 listTrades=40ms 처럼 정상.
+ * 두 SDK 의 lazy init 1회 비용. 같은 instance 의 두 번째 호출은 listTrades=34ms 처럼 정상.
  *
  * <p>OS socket / TLS connection 자체는 snapshot 에 안 박히고 restore 시 닫힌다 (AWS 공식 동작).
- * 따라서 첫 호출에 TLS handshake 는 여전히 발생하지만, SDK 내부 lazy init (region resolution,
- * credential chain, endpoint resolve, HttpClient 내부 상태) 이 사라지면 ~3초 페널티가 ~수백 ms 로 줄어든다.
+ * 따라서 첫 호출에 TLS handshake 는 여전히 발생하지만, SDK 내부 lazy init 이 사라지면
+ * ~3초 페널티가 ~수백 ms 로 줄어든다.
  *
- * <p>{@link ApplicationReadyEvent} 가 SpringApplication.run() 완료 직후 발생하므로 Lambda 의 init phase
- * 내부에서 실행됨이 보장된다 — 결과가 snapshot 에 박힌다.
+ * <p>{@code @PostConstruct} 는 Spring 의 bean 초기화 시점 — Spring Cloud Function FunctionInvoker
+ * 가 init phase 에 ApplicationContext 를 부팅하면 그 안에서 실행됨이 보장된다.
+ * ApplicationReadyEvent 보다 lifecycle 이 단순하고 신뢰성 높다.
  *
- * <p>로컬/테스트 환경에선 KIS HEAD 가 외부 호출이라 거슬리고 의미도 없으므로 Lambda 환경에서만 실행한다.
+ * <p>이전 시도(ApplicationReadyEvent + AWS_LAMBDA_FUNCTION_NAME 가드)는 로그 자체가 출력되지 않아
+ * 원인 진단이 어려웠다. 가드를 제거하고 @PostConstruct 로 단순화 — 외부 호출 실패는 try/catch 로 흡수.
  */
 @Component
 public class SnapStartWarmup {
@@ -48,21 +50,18 @@ public class SnapStartWarmup {
         this.kisBaseUrl = kisBaseUrl;
     }
 
-    @EventListener(ApplicationReadyEvent.class)
+    @PostConstruct
     public void warmup() {
-        // Lambda 외 환경(로컬 dev, 테스트)에선 외부 호출이 의미 없거나 거슬리므로 skip.
-        if (System.getenv("AWS_LAMBDA_FUNCTION_NAME") == null) {
-            return;
-        }
+        log.info("SnapStartWarmup: starting (DDB + KIS init phase priming)");
 
         long t0 = System.currentTimeMillis();
         try {
             // DescribeTable 은 light read — SDK 의 region/credential/endpoint resolve 와
             // UrlConnectionHttpClient 의 lazy init 을 전부 trigger 한다.
             ddb.describeTable(b -> b.tableName(tableName));
-            log.info("SnapStart warmup: DDB describeTable OK ({}ms)", System.currentTimeMillis() - t0);
+            log.info("SnapStartWarmup: DDB describeTable OK ({}ms)", System.currentTimeMillis() - t0);
         } catch (Exception ex) {
-            log.warn("SnapStart warmup: DDB describeTable 실패 (무시): {}", ex.toString());
+            log.warn("SnapStartWarmup: DDB describeTable 실패 (무시): {}", ex.toString());
         }
 
         long t1 = System.currentTimeMillis();
@@ -70,10 +69,12 @@ public class SnapStartWarmup {
             // KIS endpoint 에 HEAD 요청 — 응답 코드는 무관 (404/405 가 와도 OK).
             // JDK HttpClient 의 내부 lazy init + TLS 컨텍스트 / ALPN 협상 캐시를 trigger 하는 게 목적.
             kisRestClient.head().uri(kisBaseUrl).retrieve().toBodilessEntity();
-            log.info("SnapStart warmup: KIS HEAD OK ({}ms)", System.currentTimeMillis() - t1);
+            log.info("SnapStartWarmup: KIS HEAD OK ({}ms)", System.currentTimeMillis() - t1);
         } catch (Exception ex) {
             // HEAD 가 4xx 라도 TLS handshake + HttpClient init 은 일어났으므로 효과 있음.
-            log.warn("SnapStart warmup: KIS HEAD 실패 (무시, HttpClient init 은 발생): {}", ex.toString());
+            log.warn("SnapStartWarmup: KIS HEAD 실패 (무시, HttpClient init 은 발생): {}", ex.toString());
         }
+
+        log.info("SnapStartWarmup: done (total {}ms)", System.currentTimeMillis() - t0);
     }
 }
