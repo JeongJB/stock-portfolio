@@ -190,7 +190,7 @@ function buildTickerSlices(data: PortfolioView, currency: 'USD' | 'KRW', include
           ? rawPositionSlices
           : rawPositionSlices.map((s) => ({
             ...s,
-            weight: (s.weight / positionWeightSum) * 100,
+            weight: s.weight / positionWeightSum,
           }))
 
   const cashWeight = Number(data.cashWeight)
