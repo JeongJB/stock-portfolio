@@ -6,13 +6,14 @@ import com.example.stockportfolio.domain.MarketDataPort;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ssm.SsmClient;
 
+import java.net.http.HttpClient;
 import java.time.Clock;
 import java.time.Duration;
 
@@ -29,8 +30,16 @@ public class KisMarketDataConfig {
 
     @Bean
     public RestClient kisRestClient() {
-        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
-        factory.setConnectTimeout(Duration.ofSeconds(3));
+        // JDK HttpClient 는 connection pool + keep-alive + HTTP/2 를 기본 지원한다.
+        // 직전에 쓰던 SimpleClientHttpRequestFactory 는 HttpURLConnection 기반이라
+        // 매 호출마다 TLS handshake 가 발생 — SnapStart restore 후 첫 view() 의 8개
+        // 종목 병렬 시세 호출이 8번 TLS handshake 를 동시 수행해 6초 가까이 걸렸다.
+        // HttpClient 인스턴스는 thread-safe + 재사용 안전. RestClient 와 함께 싱글톤 빈으로 공유.
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .version(HttpClient.Version.HTTP_2)
+                .build();
+        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
         factory.setReadTimeout(Duration.ofSeconds(10));
         return RestClient.builder().requestFactory(factory).build();
     }
