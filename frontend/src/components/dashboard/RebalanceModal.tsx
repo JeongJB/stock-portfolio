@@ -23,7 +23,10 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
 
   const [ticker, setTicker] = useState<string>(initialTicker ?? candidates[0]?.ticker ?? '')
   const [targetPctInput, setTargetPctInput] = useState<string>('')
-  const [result, setResult] = useState<RebalanceResult | null>(null)
+  // 계산 시점의 target 도 함께 박아 input 이 바뀌어도 결과 카드의 "목표" 표시가 고정되게 한다.
+  const [result, setResult] = useState<{ computed: RebalanceResult; targetPct: number } | null>(
+    null,
+  )
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const selectedPosition: PositionView | undefined = useMemo(
@@ -103,7 +106,7 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
       setErrorMsg('해당 종목의 시세를 사용할 수 없어 계산할 수 없습니다.')
       return
     }
-    setResult(computeRebalance(input))
+    setResult({ computed: computeRebalance(input), targetPct: target })
   }
 
   const handleNavigate = (action: 'BUY' | 'SELL', qty: number) => {
@@ -218,8 +221,8 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
             {result && selectedPosition && (
               <ResultCard
                 ticker={selectedPosition.ticker}
-                result={result}
-                targetPct={Number(targetPctInput)}
+                result={result.computed}
+                targetPct={result.targetPct}
                 usdKrwRate={rateValid ? usdKrwRate : null}
                 onNavigate={handleNavigate}
               />
