@@ -70,6 +70,26 @@ export function AllocationTreemap({ data, includeCash }: Props) {
     height: DEFAULT_HEIGHT,
   })
   const [hover, setHover] = useState<HoverState | null>(null)
+  // SVG 요소의 색상은 inline 으로 박는다 — Tailwind utility (fill-slate-100 등) 는
+  // CSS rule 로만 적용되어 html-to-image 캡쳐 시 inline 으로 변환되지 않고 SVG 기본값(검정)이 된다.
+  // 다크 모드 분기는 matchMedia 로 직접 감지.
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (e: MediaQueryListEvent) => setIsDark(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  // Tailwind slate 톤 대응 hex (캡쳐 호환).
+  const headerBg = isDark ? '#1e293b' : '#f1f5f9' // slate-800 / slate-100
+  const headerText = isDark ? '#cbd5e1' : '#475569' // slate-300 / slate-600
+  const outlineStroke = isDark ? '#334155' : '#cbd5e1' // slate-700 / slate-300
 
   useEffect(() => {
     const el = containerRef.current
@@ -134,7 +154,7 @@ export function AllocationTreemap({ data, includeCash }: Props) {
                     y={sectorNode.y0}
                     width={w}
                     height={SECTOR_HEADER_HEIGHT}
-                    className="fill-slate-100 dark:fill-slate-800"
+                    fill={headerBg}
                     onMouseEnter={(e) => {
                       const cont = containerRef.current?.getBoundingClientRect()
                       if (!cont) return
@@ -160,7 +180,7 @@ export function AllocationTreemap({ data, includeCash }: Props) {
                     dominantBaseline="middle"
                     fontSize={11}
                     fontWeight={700}
-                    className="fill-slate-600 dark:fill-slate-300"
+                    fill={headerText}
                     style={{ pointerEvents: 'none' }}
                   >
                     {branch.sector}
@@ -172,7 +192,7 @@ export function AllocationTreemap({ data, includeCash }: Props) {
                     width={w}
                     height={h}
                     fill="none"
-                    className="stroke-slate-300 dark:stroke-slate-700"
+                    stroke={outlineStroke}
                     strokeWidth={1}
                     pointerEvents="none"
                   />
