@@ -36,6 +36,20 @@ interface TreeRoot {
 // d3-hierarchy 의 노드 data 는 합집합 — type guard 로 분기.
 type NodeData = TreeRoot | Branch | Leaf
 
+// hover state 는 leaf (종목) 또는 sector 헤더 두 케이스. 각각 다른 정보 표출.
+// sector 의 marketValueSum 은 현재 currency 기준 (buildTree 가 currency 별로 leaf.marketValue 결정).
+type HoverState =
+  | { kind: 'leaf'; leaf: Leaf; sector: string; x: number; y: number }
+  | {
+      kind: 'sector'
+      sector: string
+      weight: number
+      marketValueSum: number
+      tickerCount: number
+      x: number
+      y: number
+    }
+
 const SECTOR_UNCLASSIFIED = '분류 미지정'
 const CASH_SECTOR = '현금'
 const CASH_TICKER = 'USD 현금'
@@ -52,12 +66,7 @@ export function AllocationTreemap({ data }: Props) {
     width: 0,
     height: DEFAULT_HEIGHT,
   })
-  const [hover, setHover] = useState<{
-    leaf: Leaf
-    sector: string
-    x: number
-    y: number
-  } | null>(null)
+  const [hover, setHover] = useState<HoverState | null>(null)
 
   useEffect(() => {
     const el = containerRef.current
@@ -114,15 +123,37 @@ export function AllocationTreemap({ data }: Props) {
               const w = sectorNode.x1 - sectorNode.x0
               const h = sectorNode.y1 - sectorNode.y0
               if (w <= 0 || h <= 0) return null
+              const sectorWeight = branch.children.reduce((s, l) => s + l.weight, 0)
+              const sectorMVSum = branch.children.reduce(
+                (s, l) => s + (l.marketValue ? Number(l.marketValue) : 0),
+                0,
+              )
               return (
                 <g key={`sector-${idx}`}>
-                  {/* 헤더 배경 */}
+                  {/* 헤더 배경 + hover trigger */}
                   <rect
                     x={sectorNode.x0}
                     y={sectorNode.y0}
                     width={w}
                     height={SECTOR_HEADER_HEIGHT}
                     className="fill-slate-100 dark:fill-slate-800"
+                    onMouseEnter={(e) => {
+                      const cont = containerRef.current?.getBoundingClientRect()
+                      if (!cont) return
+                      const tgt = (
+                        e.currentTarget as SVGRectElement
+                      ).getBoundingClientRect()
+                      setHover({
+                        kind: 'sector',
+                        sector: branch.sector,
+                        weight: sectorWeight,
+                        marketValueSum: sectorMVSum,
+                        tickerCount: branch.children.length,
+                        x: tgt.left + tgt.width / 2 - cont.left,
+                        y: tgt.top - cont.top,
+                      })
+                    }}
+                    onMouseLeave={() => setHover(null)}
                   />
                   {/* 헤더 텍스트 */}
                   <text
@@ -136,7 +167,7 @@ export function AllocationTreemap({ data }: Props) {
                   >
                     {branch.sector}
                   </text>
-                  {/* sector 외곽 */}
+                  {/* sector 외곽 — 헤더 외 영역엔 이벤트 안 잡음 (leaf hover 와 충돌 방지) */}
                   <rect
                     x={sectorNode.x0}
                     y={sectorNode.y0}
@@ -145,6 +176,7 @@ export function AllocationTreemap({ data }: Props) {
                     fill="none"
                     className="stroke-slate-300 dark:stroke-slate-700"
                     strokeWidth={1}
+                    pointerEvents="none"
                   />
                 </g>
               )
@@ -174,6 +206,7 @@ export function AllocationTreemap({ data }: Props) {
                     if (!cont) return
                     const tgt = (e.currentTarget as SVGGElement).getBoundingClientRect()
                     setHover({
+                      kind: 'leaf',
                       leaf,
                       sector,
                       x: tgt.left + tgt.width / 2 - cont.left,
@@ -221,11 +254,26 @@ export function AllocationTreemap({ data }: Props) {
             className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             style={{ left: hover.x, top: hover.y - 4 }}
           >
-            <div className="font-medium">{hover.leaf.ticker}</div>
-            <div className="text-slate-700 dark:text-slate-200">
-              {formatPercent(String(hover.leaf.weight))} ·{' '}
-              {formatMoney(hover.leaf.marketValue, currency)}
-            </div>
+            {hover.kind === 'leaf' ? (
+              <>
+                <div className="font-medium">{hover.leaf.ticker}</div>
+                <div className="text-slate-700 dark:text-slate-200">
+                  {formatPercent(String(hover.leaf.weight))} ·{' '}
+                  {formatMoney(hover.leaf.marketValue, currency)}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="font-medium">{hover.sector}</div>
+                <div className="text-slate-700 dark:text-slate-200">
+                  {formatPercent(String(hover.weight))} ·{' '}
+                  {formatMoney(String(hover.marketValueSum), currency)}
+                </div>
+                <div className="text-slate-500 dark:text-slate-400">
+                  {hover.tickerCount}개 종목
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -288,7 +336,7 @@ function sumWeight(leaves: Leaf[]): number {
 }
 
 /**
- * 등락률 → 색상. 한국식: + 빨강, - 초록. 절댓값이 클수록 진해짐.
+ * 등락률 → 색상. 한국식: + 빨강, - 파랑. 절댓값이 클수록 진해짐.
  * |pct| ≥ 5% 부터 max intensity. 현금/등락률 없음 → 회색 톤.
  */
 function pctColor(pct: number | null, isCash: boolean): string {
@@ -299,7 +347,7 @@ function pctColor(pct: number | null, isCash: boolean): string {
   const abs = Math.min(Math.abs(pct), 5)
   // lightness: 58% (pct≈0) → 18% (pct≥5)
   const lightness = 58 - (abs / 5) * 40
-  const hue = pct > 0 ? 0 : 140 // 0=red, 140=green
+  const hue = pct > 0 ? 0 : 220 // 0=red, 220=blue
   return `hsl(${hue}, 100%, ${lightness}%)`
 }
 
