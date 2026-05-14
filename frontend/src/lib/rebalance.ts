@@ -31,7 +31,9 @@ export interface RebalanceResult {
 
 /**
  * 목표 비중에 맞춰 매수/매도 주 수를 계산.
- * truncate (0방향) 사용 — 매수든 매도든 안전한 내림.
+ * 목표 비중에 가장 가까운 정수 주를 선택한다 (round, half-away-from-zero).
+ * 예: target 2%, 한 주당 0.7% 인 경우 rawQty = 2.857... → 3주 매수 (실현 2.1%, 오차 -0.1%).
+ * truncate 였다면 2주 매수 (실현 1.4%, 오차 +0.6%) 라 더 멀었음.
  * 필요주수 0 이면 NONE.
  */
 export function computeRebalance(input: RebalanceInput): RebalanceResult {
@@ -50,7 +52,9 @@ export function computeRebalance(input: RebalanceInput): RebalanceResult {
   const targetUsd = totalMarketValueUsd * (targetWeightPct / 100)
   const diffUsd = targetUsd - marketValueUsd
   const rawQty = lastPriceUsd > 0 ? diffUsd / lastPriceUsd : 0
-  let signedQty = Math.trunc(rawQty)
+  // half-away-from-zero rounding — 음수 rawQty 에 대해서도 절대값 기준 반올림이라 일관성 있다.
+  // JavaScript Math.round 는 음수 0.5 에서 half-toward-positive-infinity 라 직접 sign-aware 처리.
+  let signedQty = Math.sign(rawQty) * Math.round(Math.abs(rawQty))
 
   // 매도 cap: 보유 수량 초과 매도는 보유분으로 제한.
   let cappedBySellQty = false

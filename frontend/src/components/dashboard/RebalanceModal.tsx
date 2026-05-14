@@ -185,6 +185,12 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
                 inputMode="decimal"
                 value={targetPctInput}
                 onChange={(e) => setTargetPctInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleCompute()
+                  }
+                }}
                 placeholder="0.00"
                 className="rounded-md border border-slate-300 bg-white px-3 py-2 font-mono tabular-nums text-slate-900 focus:border-slate-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
               />
