@@ -1,78 +1,100 @@
-import { useEffect, useState } from 'react'
-import { ResponsiveContainer, Tooltip, Treemap } from 'recharts'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  hierarchy,
+  treemap as d3treemap,
+  treemapSquarify,
+  type HierarchyRectangularNode,
+} from 'd3-hierarchy'
 import type { PortfolioView } from '../../api/types'
 import { useCurrency } from '../../app/currencyContext'
 import { formatMoney, formatPercent } from '../../app/format'
-import { sectorHsl } from '../../app/sectorColor'
 
 interface Props {
   data: PortfolioView
 }
 
-interface Slice {
-  name: string
-  weight: number
+// 종목 leaf 노드: 종목 1개 = 사각형 1개.
+interface Leaf {
+  ticker: string
+  weight: number // 0~1 (portfolio 응답 그대로 — 전체 자산 대비 비중, 현금 포함)
   marketValue: string | null
-  // sector 모드에서만 채워짐 — 툴팁 2 줄용.
-  tickerCount?: number
+  dailyChangePct: number | null // % 단위. null 이면 회색.
+  isCash: boolean
 }
 
-// 종목별 모드: 15 항목까지 인접 셀 구분이 잘 되도록 큐레이팅한 Tailwind 600/700 톤.
-const TICKER_COLORS = [
-  '#2563eb', // blue-600
-  '#059669', // emerald-600
-  '#d97706', // amber-600
-  '#dc2626', // red-600
-  '#7c3aed', // violet-600
-  '#0891b2', // cyan-600
-  '#db2777', // pink-600
-  '#65a30d', // lime-600
-  '#ea580c', // orange-600
-  '#0d9488', // teal-600
-  '#4f46e5', // indigo-600
-  '#c026d3', // fuchsia-600
-  '#a16207', // yellow-700
-  '#be123c', // rose-700
-  '#475569', // slate-600
-]
+// 한 sector 의 묶음. children = sector 안의 종목들.
+interface Branch {
+  sector: string
+  children: Leaf[]
+}
 
-type AllocationMode = 'ticker' | 'sector' | 'ticker-no-cash'
+interface TreeRoot {
+  name: 'root'
+  children: Branch[]
+}
 
-const ALLOCATION_MODE_KEY = 'allocation-mode'
+// d3-hierarchy 의 노드 data 는 합집합 — type guard 로 분기.
+type NodeData = TreeRoot | Branch | Leaf
+
 const SECTOR_UNCLASSIFIED = '분류 미지정'
-const CASH_LABEL_TICKER = 'USD 현금'
-const CASH_LABEL_SECTOR = '현금'
-
-function loadInitialMode(): AllocationMode {
-  if (typeof window === 'undefined') return 'ticker'
-  try {
-    const v = window.localStorage.getItem(ALLOCATION_MODE_KEY)
-    return v === 'sector' ? 'sector' :
-        v === 'ticker-no-cash' ? 'ticker-no-cash' :
-        'ticker'
-  } catch {
-    return 'ticker'
-  }
-}
+const CASH_SECTOR = '현금'
+const CASH_TICKER = 'USD 현금'
+// d3 treemap 의 paddingTop — sector cell 의 상단에 sector 이름을 그릴 공간.
+const SECTOR_HEADER_HEIGHT = 20
+const CELL_INNER_PADDING = 1
+// 컨테이너 기본 높이 (Tailwind h-72 와 동기). 초기 render 시 size 측정 전 fallback.
+const DEFAULT_HEIGHT = 288
 
 export function AllocationTreemap({ data }: Props) {
   const { currency } = useCurrency()
-  const [mode, setMode] = useState<AllocationMode>(loadInitialMode)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState<{ width: number; height: number }>({
+    width: 0,
+    height: DEFAULT_HEIGHT,
+  })
+  const [hover, setHover] = useState<{
+    leaf: Leaf
+    sector: string
+    x: number
+    y: number
+  } | null>(null)
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(ALLOCATION_MODE_KEY, mode)
-    } catch {
-      // localStorage 비활성화 환경 — 무시.
-    }
-  }, [mode])
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      const e = entries[0]
+      if (!e) return
+      // setState 는 ResizeObserver 콜백 (외부 reactive source) 안이라 effect 직접 호출 아님.
+      setSize({ width: e.contentRect.width, height: e.contentRect.height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
-  const slices = mode === 'sector' ? buildSectorSlices(data, currency) : buildTickerSlices(data, currency, mode !== 'ticker-no-cash')
+  const tree = useMemo(() => buildTree(data, currency), [data, currency])
 
-  if (slices.length === 0) {
+  const layout: HierarchyRectangularNode<NodeData> | null = useMemo(() => {
+    if (size.width <= 0 || size.height <= 0) return null
+    if (tree.children.length === 0) return null
+    const root = hierarchy<NodeData>(tree, (node) =>
+      isLeaf(node) ? undefined : (node as Branch | TreeRoot).children,
+    )
+      .sum((node) => (isLeaf(node) ? node.weight : 0))
+      .sort((a, b) => (b.value ?? 0) - (a.value ?? 0))
+    return d3treemap<NodeData>()
+      .tile(treemapSquarify)
+      .size([size.width, size.height])
+      .paddingOuter(0)
+      .paddingTop(SECTOR_HEADER_HEIGHT)
+      .paddingInner(CELL_INNER_PADDING)
+      .round(true)(root)
+  }, [tree, size])
+
+  if (tree.children.length === 0) {
     return (
       <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-        <Header mode={mode} onChange={setMode} />
+        <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
           표시할 비중 데이터가 없습니다. (시세 조회가 모두 실패했거나 보유 자산이 없습니다.)
         </p>
@@ -80,247 +102,213 @@ export function AllocationTreemap({ data }: Props) {
     )
   }
 
-  // 색상은 mode 별로 다른 규칙 — ticker 모드는 인덱스 기반 큐레이션, sector 모드는 hash 기반 결정적 HSL.
-  const treemapData = slices.map((s, idx) => ({
-    ...s,
-    color: mode === 'sector' ? sectorHsl(s.name) : TICKER_COLORS[idx % TICKER_COLORS.length],
-  }))
-
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <Header mode={mode} onChange={setMode} />
-      <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-center">
-        <div className="h-72 w-full lg:flex-1">
-          <ResponsiveContainer width="100%" height="100%">
-            <Treemap
-              data={treemapData}
-              dataKey="weight"
-              nameKey="name"
-              stroke="#fff"
-              isAnimationActive={false}
-              content={<TreemapCell />}
-            >
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload || payload.length === 0) return null
-                  const slice = (payload[0]?.payload ?? {}) as Slice
-                  const pct = formatPercent(String(slice.weight ?? ''))
-                  const mv = formatMoney(slice.marketValue, currency)
-                  return (
-                    <div className="rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
-                      <div className="font-medium">{slice.name}</div>
-                      {mode === 'sector' && slice.tickerCount != null ? (
-                        <div className="text-slate-500 dark:text-slate-400">
-                          {slice.tickerCount}개 종목
-                        </div>
-                      ) : null}
-                      <div className="text-slate-700 dark:text-slate-200">
-                        {pct} · {mv}
-                      </div>
-                    </div>
-                  )
-                }}
-              />
-            </Treemap>
-          </ResponsiveContainer>
-        </div>
-        <AllocationLegend slices={slices} mode={mode} />
+      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
+      <div ref={containerRef} className="relative mt-2 h-72 w-full">
+        {layout && size.width > 0 && (
+          <svg width={size.width} height={size.height}>
+            {/* sector 영역: 외곽 + 상단 헤더(이름) */}
+            {layout.children?.map((sectorNode, idx) => {
+              const branch = sectorNode.data as Branch
+              const w = sectorNode.x1 - sectorNode.x0
+              const h = sectorNode.y1 - sectorNode.y0
+              if (w <= 0 || h <= 0) return null
+              return (
+                <g key={`sector-${idx}`}>
+                  {/* 헤더 배경 */}
+                  <rect
+                    x={sectorNode.x0}
+                    y={sectorNode.y0}
+                    width={w}
+                    height={SECTOR_HEADER_HEIGHT}
+                    className="fill-slate-100 dark:fill-slate-800"
+                  />
+                  {/* 헤더 텍스트 */}
+                  <text
+                    x={sectorNode.x0 + 6}
+                    y={sectorNode.y0 + SECTOR_HEADER_HEIGHT / 2 + 1}
+                    dominantBaseline="middle"
+                    fontSize={11}
+                    fontWeight={600}
+                    className="fill-slate-600 dark:fill-slate-300"
+                    style={{ pointerEvents: 'none' }}
+                  >
+                    {branch.sector}
+                  </text>
+                  {/* sector 외곽 */}
+                  <rect
+                    x={sectorNode.x0}
+                    y={sectorNode.y0}
+                    width={w}
+                    height={h}
+                    fill="none"
+                    className="stroke-slate-300 dark:stroke-slate-700"
+                    strokeWidth={1}
+                  />
+                </g>
+              )
+            })}
+            {/* 종목 leaf: 등락률 색상 + 영역 충분하면 ticker + 등락률 텍스트 */}
+            {layout.leaves().map((node, i) => {
+              const leaf = node.data as Leaf
+              const sectorBranch = node.parent?.data as Branch | undefined
+              const sector = sectorBranch?.sector ?? ''
+              const w = node.x1 - node.x0
+              const h = node.y1 - node.y0
+              if (w <= 0 || h <= 0) return null
+              const fill = pctColor(leaf.dailyChangePct, leaf.isCash)
+              const tickerFontSize = pickTickerFontSize(w, h)
+              const pctFontSize = pickPctFontSize(w, h)
+              const showTicker = tickerFontSize > 0
+              const showPct = pctFontSize > 0 && leaf.dailyChangePct != null
+              const tickerY = showPct
+                ? node.y0 + h / 2 - pctFontSize / 2 - 1
+                : node.y0 + h / 2
+              const pctY = node.y0 + h / 2 + tickerFontSize / 2 + 2
+              return (
+                <g
+                  key={`leaf-${i}`}
+                  onMouseEnter={(e) => {
+                    const cont = containerRef.current?.getBoundingClientRect()
+                    if (!cont) return
+                    const tgt = (e.currentTarget as SVGGElement).getBoundingClientRect()
+                    setHover({
+                      leaf,
+                      sector,
+                      x: tgt.left + tgt.width / 2 - cont.left,
+                      y: tgt.top - cont.top,
+                    })
+                  }}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  <rect x={node.x0} y={node.y0} width={w} height={h} fill={fill} />
+                  {showTicker && (
+                    <text
+                      x={node.x0 + w / 2}
+                      y={tickerY}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={tickerFontSize}
+                      fontWeight={500}
+                      fill="#fff"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {leaf.ticker}
+                    </text>
+                  )}
+                  {showPct && (
+                    <text
+                      x={node.x0 + w / 2}
+                      y={pctY}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fontSize={pctFontSize}
+                      fill="#fff"
+                      opacity={0.9}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {formatChangePct(leaf.dailyChangePct)}
+                    </text>
+                  )}
+                </g>
+              )
+            })}
+          </svg>
+        )}
+        {hover && (
+          <div
+            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-md dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            style={{ left: hover.x, top: hover.y - 4 }}
+          >
+            <div className="font-medium">{hover.leaf.ticker}</div>
+            <div className="text-slate-700 dark:text-slate-200">
+              {formatPercent(String(hover.leaf.weight))} ·{' '}
+              {formatMoney(hover.leaf.marketValue, currency)}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   )
 }
 
-function Header({
-  mode,
-  onChange,
-}: {
-  mode: AllocationMode
-  onChange: (next: AllocationMode) => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
-      <div
-        role="tablist"
-        aria-label="비중 그룹화 방식"
-        className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 text-xs font-medium dark:border-slate-700 dark:bg-slate-900"
-      >
-        {(
-          [
-            { value: 'ticker' as AllocationMode, label: '종목별' },
-            { value: 'ticker-no-cash' as AllocationMode, label: '종목별(현금 제외)' },
-            { value: 'sector' as AllocationMode, label: 'sector별' },
-          ]
-        ).map(({ value, label }) => {
-          const active = mode === value
-          return (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onChange(value)}
-              className={
-                active
-                  ? 'rounded-sm bg-slate-900 px-2.5 py-1 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'rounded-sm px-2.5 py-1 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-              }
-            >
-              {label}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
+function isLeaf(node: NodeData): node is Leaf {
+  return (node as Leaf).ticker != null
 }
 
-function buildTickerSlices(data: PortfolioView, currency: 'USD' | 'KRW', includeCash: boolean): Slice[] {
-  const rawPositionSlices: Slice[] = data.positions
-    .filter((p) => p.weight != null && Number(p.weight) > 0)
-    .map((p) => ({
-      name: p.ticker,
-      weight: Number(p.weight),
-      marketValue: currency === 'USD' ? p.marketValueUsd : p.marketValueKrw,
-    }))
-
-  const positionWeightSum = rawPositionSlices.reduce((sum, s) => sum + s.weight, 0)
-  const positionSlices: Slice[] =
-      includeCash || !Number.isFinite(positionWeightSum) || positionWeightSum <= 0
-          ? rawPositionSlices
-          : rawPositionSlices.map((s) => ({
-            ...s,
-            weight: s.weight / positionWeightSum,
-          }))
-
-  const cashWeight = Number(data.cashWeight)
-  const cashSlice: Slice | null =
-    includeCash && Number.isFinite(cashWeight) && cashWeight > 0
-      ? {
-          name: CASH_LABEL_TICKER,
-          weight: cashWeight,
-          marketValue: currency === 'USD' ? data.cashUsd : data.cashKrw,
-        }
-      : null
-
-  return [...positionSlices, ...(cashSlice ? [cashSlice] : [])].sort(
-    (a, b) => b.weight - a.weight,
-  )
-}
-
-function buildSectorSlices(data: PortfolioView, currency: 'USD' | 'KRW'): Slice[] {
-  // 시세 가용 종목만 sector 별 합산. 시세 실패 종목은 weight/marketValue 가 null 이라 합계에서 제외.
-  const grouped = new Map<
-    string,
-    { weight: number; marketValueUsd: number; marketValueKrw: number; tickerCount: number }
-  >()
+function buildTree(data: PortfolioView, currency: 'USD' | 'KRW'): TreeRoot {
+  const grouped = new Map<string, Leaf[]>()
   for (const p of data.positions) {
-    if (p.weight == null || p.marketValueUsd == null || p.marketValueKrw == null) continue
+    if (p.weight == null) continue
     const w = Number(p.weight)
     if (!Number.isFinite(w) || w <= 0) continue
-    const mvUsd = Number(p.marketValueUsd)
-    const mvKrw = Number(p.marketValueKrw)
-    const key =
+    const sector =
       typeof p.sector === 'string' && p.sector.trim().length > 0
         ? p.sector
         : SECTOR_UNCLASSIFIED
-    const acc = grouped.get(key) ?? {
-      weight: 0,
-      marketValueUsd: 0,
-      marketValueKrw: 0,
-      tickerCount: 0,
-    }
-    acc.weight += w
-    acc.marketValueUsd += Number.isFinite(mvUsd) ? mvUsd : 0
-    acc.marketValueKrw += Number.isFinite(mvKrw) ? mvKrw : 0
-    acc.tickerCount += 1
-    grouped.set(key, acc)
+    const leaves = grouped.get(sector) ?? []
+    leaves.push({
+      ticker: p.ticker,
+      weight: w,
+      marketValue: currency === 'USD' ? p.marketValueUsd : p.marketValueKrw,
+      dailyChangePct: p.dailyChangePct != null ? Number(p.dailyChangePct) : null,
+      isCash: false,
+    })
+    grouped.set(sector, leaves)
   }
 
-  const sliceList: Slice[] = Array.from(grouped.entries()).map(([name, agg]) => ({
-    name,
-    weight: agg.weight,
-    marketValue: currency === 'USD' ? String(agg.marketValueUsd) : String(agg.marketValueKrw),
-    tickerCount: agg.tickerCount,
-  }))
+  // sector 별 합계 비중으로 정렬 (큰 sector 가 좌상단). 알파벳 정렬보다 시각적으로 자연스러움.
+  const sectorBranches: Branch[] = Array.from(grouped.entries())
+    .map(([sector, children]) => ({ sector, children }))
+    .sort((a, b) => sumWeight(b.children) - sumWeight(a.children))
 
-  // 현금은 별도 슬라이스 — sector 그룹과 같은 색상 hash 함수에 통과시키지만 종목 수는 의미가 없어 미부여.
+  // 현금은 별도 "현금" sector 로 묶임.
   const cashWeight = Number(data.cashWeight)
   if (Number.isFinite(cashWeight) && cashWeight > 0) {
-    sliceList.push({
-      name: CASH_LABEL_SECTOR,
-      weight: cashWeight,
-      marketValue: currency === 'USD' ? data.cashUsd : data.cashKrw,
+    sectorBranches.push({
+      sector: CASH_SECTOR,
+      children: [
+        {
+          ticker: CASH_TICKER,
+          weight: cashWeight,
+          marketValue: currency === 'USD' ? data.cashUsd : data.cashKrw,
+          dailyChangePct: null,
+          isCash: true,
+        },
+      ],
     })
   }
 
-  return sliceList.sort((a, b) => b.weight - a.weight)
+  return { name: 'root', children: sectorBranches }
 }
 
-interface TreemapCellProps {
-  x?: number
-  y?: number
-  width?: number
-  height?: number
-  depth?: number
-  name?: string
-  weight?: number
-  color?: string
+function sumWeight(leaves: Leaf[]): number {
+  return leaves.reduce((s, l) => s + l.weight, 0)
 }
 
-function TreemapCell(props: TreemapCellProps) {
-  const { x = 0, y = 0, width = 0, height = 0, depth, name, weight, color } = props
-  if (depth !== 1 || width <= 0 || height <= 0) {
-    return null
+/**
+ * 등락률 → 색상. 한국식: + 빨강, - 초록. 절댓값이 클수록 진해짐.
+ * |pct| ≥ 5% 부터 max intensity. 현금/등락률 없음 → 회색 톤.
+ */
+function pctColor(pct: number | null, isCash: boolean): string {
+  if (isCash) return '#94a3b8' // slate-400 — 현금은 평가 변동 없음
+  if (pct == null || !Number.isFinite(pct) || pct === 0) {
+    return '#cbd5e1' // slate-300 — 등락률 없음 / 보합
   }
-  const fill = color ?? '#2563eb'
-  const tickerFontSize = pickTickerFontSize(width, height)
-  const pctFontSize = pickPctFontSize(width, height)
-  const showTicker = tickerFontSize > 0 && Boolean(name)
-  const showPct = pctFontSize > 0 && weight != null
-  const tickerY = showPct ? y + height / 2 - tickerFontSize / 2 : y + height / 2
-  const pctY = y + height / 2 + pctFontSize / 2 + 2
-  return (
-    <g>
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        fill={fill}
-        stroke="#fff"
-        strokeWidth={2}
-      />
-      {showTicker ? (
-        <text
-          x={x + width / 2}
-          y={tickerY}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill="#fff"
-          fontSize={tickerFontSize}
-          fontWeight={400}
-          style={{ pointerEvents: 'none' }}
-        >
-          {name}
-        </text>
-      ) : null}
-      {showPct ? (
-        <text
-          x={x + width / 2}
-          y={pctY}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          fill="#fff"
-          fontSize={pctFontSize}
-          opacity={0.85}
-          style={{ pointerEvents: 'none' }}
-        >
-          {formatPercent(String(weight))}
-        </text>
-      ) : null}
-    </g>
-  )
+  const abs = Math.min(Math.abs(pct), 5)
+  // lightness: 78% (pct≈0) → 38% (pct≥5)
+  const lightness = 78 - (abs / 5) * 40
+  // saturation: 55% → 80%
+  const saturation = 55 + (abs / 5) * 25
+  const hue = pct > 0 ? 0 : 140 // 0=red, 140=green
+  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+}
+
+function formatChangePct(pct: number | null): string {
+  if (pct == null || !Number.isFinite(pct)) return ''
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct.toFixed(2)}%`
 }
 
 // 셀이 좁아질수록 단계적으로 폰트 축소. 0 이면 라벨 숨김.
@@ -335,36 +323,4 @@ function pickPctFontSize(w: number, h: number): number {
   if (w >= 80 && h >= 44) return 10
   if (w >= 60 && h >= 36) return 9
   return 0
-}
-
-interface LegendProps {
-  slices: Slice[]
-  mode: AllocationMode
-}
-
-function AllocationLegend({ slices, mode }: LegendProps) {
-  return (
-    <ul className="flex flex-col gap-1.5 text-sm lg:w-1/3">
-      {slices.map((s, idx) => {
-        const color =
-          mode === 'sector' ? sectorHsl(s.name) : TICKER_COLORS[idx % TICKER_COLORS.length]
-        return (
-          <li
-            key={s.name}
-            className="flex items-center gap-2 text-slate-700 dark:text-slate-200"
-          >
-            <span
-              className="inline-block h-3 w-3 shrink-0 rounded-sm"
-              style={{ backgroundColor: color }}
-              aria-hidden
-            />
-            <span className="flex-1 truncate">{s.name}</span>
-            <span className="tabular-nums text-slate-600 dark:text-slate-300">
-              {formatPercent(String(s.weight))}
-            </span>
-          </li>
-        )
-      })}
-    </ul>
-  )
 }
