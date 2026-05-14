@@ -154,19 +154,21 @@ class KisMarketDataAdapterTest {
     }
 
     private void stubFallbackFx(String rate) {
-        wireMock.stubFor(get(urlPathEqualTo("/latest"))
-                .withQueryParam("from", equalTo("USD"))
-                .withQueryParam("to", equalTo("KRW"))
+        wireMock.stubFor(get(urlPathEqualTo("/v2/rates"))
+                .withQueryParam("base", equalTo("USD"))
+                .withQueryParam("quotes", equalTo("KRW"))
                 .willReturn(aResponse()
                         .withStatus(200)
                         .withHeader("Content-Type", "application/json")
                         .withBody("""
-                                {
-                                  "amount": 1.0,
-                                  "base": "USD",
-                                  "date": "2026-04-28",
-                                  "rates": { "KRW": "%s" }
-                                }
+                                [
+                                  {
+                                    "date": "2026-04-28",
+                                    "base": "USD",
+                                    "quote": "KRW",
+                                    "rate": %s
+                                  }
+                                ]
                                 """.formatted(rate))));
     }
 
@@ -222,7 +224,7 @@ class KisMarketDataAdapterTest {
         BigDecimal rate = adapter.getUsdKrwRate();
 
         assertThat(rate).isEqualByComparingTo(new BigDecimal("1380.25"));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/latest")));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/v2/rates")));
     }
 
     @Test
@@ -235,7 +237,7 @@ class KisMarketDataAdapterTest {
         BigDecimal rate = adapter.getUsdKrwRate();
 
         assertThat(rate).isEqualByComparingTo(new BigDecimal("1395.00"));
-        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/latest")));
+        wireMock.verify(1, getRequestedFor(urlPathEqualTo("/v2/rates")));
     }
 
     @Test

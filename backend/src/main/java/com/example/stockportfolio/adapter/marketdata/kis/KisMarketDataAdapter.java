@@ -318,16 +318,18 @@ public class KisMarketDataAdapter implements MarketDataPort {
     }
 
     private BigDecimal fetchRateFromFallback() {
+        // frankfurter.dev v2 명세: 응답이 배열 [{ "date":..., "base":"USD", "quote":"KRW", "rate":<n> }] 형태.
+        // 이전 frankfurter.app /latest 의 객체 응답 ({"rates":{"KRW":...}}) 과 호환 안 됨.
         JsonNode root = fxFallbackClient.get()
-                .uri(fxFallbackUrl + "/latest?from=USD&to=KRW")
+                .uri(fxFallbackUrl + "/v2/rates?base=USD&quotes=KRW")
                 .retrieve()
                 .body(JsonNode.class);
-        if (root == null || !root.has("rates") || !root.get("rates").has("KRW")) {
-            // 응답 본문 전체를 메시지에 박지 않는다. 디버깅엔 최상위 키 목록만 충분.
-            Iterable<String> keys = root != null ? root.propertyNames() : java.util.List.of();
-            throw new IllegalStateException("FX 폴백 응답에서 rates.KRW 를 찾을 수 없습니다 (응답 키: " + keys + ")");
+        if (root == null || !root.isArray() || root.isEmpty() || !root.get(0).has("rate")) {
+            // 응답 본문 전체를 메시지에 박지 않는다. 디버깅엔 최상위 형태만 충분.
+            String shape = root == null ? "null" : (root.isArray() ? "array(size=" + root.size() + ")" : root.getNodeType().name());
+            throw new IllegalStateException("FX 폴백 응답에서 rate 를 찾을 수 없습니다 (응답 형태: " + shape + ")");
         }
-        return new BigDecimal(root.get("rates").get("KRW").asString());
+        return new BigDecimal(root.get(0).get("rate").asString());
     }
 
     private static java.util.Collection<String> fieldNames(JsonNode node) {

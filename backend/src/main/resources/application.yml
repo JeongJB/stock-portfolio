@@ -13,7 +13,7 @@ kis:
   fx-probe-exchange: ${KIS_FX_PROBE_EXCHANGE:NAS}
 
 fx:
-  fallback-url: ${FX_FALLBACK_URL:https://api.frankfurter.app}
+  fallback-url: ${FX_FALLBACK_URL:https://api.frankfurter.dev}
 
 aws:
   region: ${AWS_REGION:ap-northeast-2}
