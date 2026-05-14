@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.marketdata.kis.FxRateStore;
 import com.example.stockportfolio.adapter.marketdata.kis.KisAccessTokenStore;
 import com.example.stockportfolio.adapter.web.dto.SnapshotView;
 import com.example.stockportfolio.domain.Currency;
@@ -47,6 +48,8 @@ final class DynamoAttributes {
     static final String TICKER_META_SK = "META";
     static final String KIS_ACCESS_TOKEN_PK = "META#kis";
     static final String KIS_ACCESS_TOKEN_SK = "ACCESS_TOKEN";
+    static final String FX_PK = "META#fx";
+    static final String FX_USD_KRW_SK = "USD_KRW";
     static final String TTL_ATTR = "ttl";
 
     static final ZoneId KST = ZoneId.of("Asia/Seoul");
@@ -331,5 +334,22 @@ final class DynamoAttributes {
         String accessToken = item.get("accessToken").s();
         Instant expiresAt = Instant.parse(item.get("expiresAt").s());
         return new KisAccessTokenStore.StoredToken(accessToken, expiresAt);
+    }
+
+    static Map<String, AttributeValue> fxRateItem(FxRateStore.StoredRate rate) {
+        Map<String, AttributeValue> item = new HashMap<>();
+        item.put(PK, s(FX_PK));
+        item.put(SK, s(FX_USD_KRW_SK));
+        item.put("rate", n(rate.rate()));
+        item.put("expiresAt", s(rate.expiresAt().toString()));
+        // ttl 은 expiresAt 그대로 — 만료 직후 DDB TTL 청소가 동작.
+        item.put(TTL_ATTR, AttributeValue.fromN(Long.toString(rate.expiresAt().getEpochSecond())));
+        return item;
+    }
+
+    static FxRateStore.StoredRate fxRateFromItem(Map<String, AttributeValue> item) {
+        BigDecimal rate = new BigDecimal(item.get("rate").n());
+        Instant expiresAt = Instant.parse(item.get("expiresAt").s());
+        return new FxRateStore.StoredRate(rate, expiresAt);
     }
 }

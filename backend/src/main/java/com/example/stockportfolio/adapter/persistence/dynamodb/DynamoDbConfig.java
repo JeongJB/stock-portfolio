@@ -1,5 +1,6 @@
 package com.example.stockportfolio.adapter.persistence.dynamodb;
 
+import com.example.stockportfolio.adapter.marketdata.kis.FxRateStore;
 import com.example.stockportfolio.adapter.marketdata.kis.KisAccessTokenStore;
 import com.example.stockportfolio.domain.PortfolioRepository;
 import com.example.stockportfolio.domain.TickerMetaRepository;
@@ -61,5 +62,12 @@ public class DynamoDbConfig {
             @Value("${portfolio.table-name:Portfolio}") String tableName,
             @Qualifier("kisClock") Clock clock) {
         return new DynamoKisAccessTokenStore(client, tableName, clock);
+    }
+
+    @Bean
+    public FxRateStore fxRateStore(
+            DynamoDbClient client,
+            @Value("${portfolio.table-name:Portfolio}") String tableName) {
+        return new DynamoFxRateStore(client, tableName);
     }
 }

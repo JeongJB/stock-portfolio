@@ -23,6 +23,7 @@ import java.time.ZonedDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class KisMarketDataAdapter implements MarketDataPort {
@@ -59,6 +60,7 @@ public class KisMarketDataAdapter implements MarketDataPort {
     private final String fxProbeSymbol;
     private final Exchange fxProbeExchange;
     private final Clock clock;
+    private final FxRateStore fxRateStore;
 
     private final AtomicReference<CachedRate> fxCache = new AtomicReference<>();
 
@@ -67,13 +69,15 @@ public class KisMarketDataAdapter implements MarketDataPort {
                                 String fxFallbackUrl,
                                 String fxProbeSymbol,
                                 Exchange fxProbeExchange,
-                                Clock clock) {
+                                Clock clock,
+                                FxRateStore fxRateStore) {
         this.kisHttpClient = kisHttpClient;
         this.fxFallbackClient = fxFallbackClient;
         this.fxFallbackUrl = fxFallbackUrl;
         this.fxProbeSymbol = fxProbeSymbol;
         this.fxProbeExchange = fxProbeExchange;
         this.clock = clock;
+        this.fxRateStore = fxRateStore;
     }
 
     @Override
@@ -230,17 +234,57 @@ public class KisMarketDataAdapter implements MarketDataPort {
     @Override
     public BigDecimal getUsdKrwRate() {
         Instant now = clock.instant();
+
+        // 1) in-memory cache 우선 — 같은 instance 의 연속 호출은 즉시 응답.
         CachedRate cached = fxCache.get();
         if (cached != null && cached.expiresAt().isAfter(now)) {
             return cached.rate();
         }
+
+        // 2) DDB 박제 cache — 콜드 스타트마다 KIS 호출 회피.
+        //    SnapStart 의 두 번째 init phase 가 KIS EGW00133 으로 막혀도 첫 init 의 박제를 재사용.
+        Optional<FxRateStore.StoredRate> stored = loadFromStore();
+        if (stored.isPresent() && stored.get().expiresAt().isAfter(now)) {
+            CachedRate fromStore = new CachedRate(stored.get().rate(), stored.get().expiresAt());
+            fxCache.set(fromStore);
+            return fromStore.rate();
+        }
+
+        // 3) KIS 발급 + 실패 시 폴백. 성공한 값은 in-memory + DDB 양쪽에 박제(best-effort).
         BigDecimal rate = fetchRateFromKis();
         if (rate == null) {
             log.warn("KIS 환율 추출 실패 → frankfurter.app 폴백 사용");
             rate = fetchRateFromFallback();
         }
-        fxCache.set(new CachedRate(rate, now.plus(FX_TTL)));
+        Instant expiresAt = now.plus(FX_TTL);
+        fxCache.set(new CachedRate(rate, expiresAt));
+        persistToStore(new FxRateStore.StoredRate(rate, expiresAt));
         return rate;
+    }
+
+    private Optional<FxRateStore.StoredRate> loadFromStore() {
+        if (fxRateStore == null) {
+            return Optional.empty();
+        }
+        try {
+            return fxRateStore.find();
+        } catch (RuntimeException ex) {
+            // best-effort: 저장소 장애 시 KIS 발급으로 폴스루.
+            log.warn("FX rate DDB find 실패 — KIS 호출로 폴스루: {}", ex.toString());
+            return Optional.empty();
+        }
+    }
+
+    private void persistToStore(FxRateStore.StoredRate rate) {
+        if (fxRateStore == null) {
+            return;
+        }
+        try {
+            fxRateStore.save(rate);
+        } catch (RuntimeException ex) {
+            // best-effort: 박제 실패해도 in-memory 캐시는 유효 → 호출자에게 전파하지 않음.
+            log.warn("FX rate DDB save 실패 — in-memory 캐시만 유지: {}", ex.toString());
+        }
     }
 
     private BigDecimal fetchRateFromKis() {

@@ -83,13 +83,15 @@ public class KisMarketDataConfig {
             @Value("${fx.fallback-url:https://api.frankfurter.app}") String fxFallbackUrl,
             @Value("${kis.fx-probe-symbol:AAPL}") String fxProbeSymbol,
             @Value("${kis.fx-probe-exchange:NAS}") String fxProbeExchange,
-            Clock kisClock) {
+            Clock kisClock,
+            FxRateStore fxRateStore) {
         return new KisMarketDataAdapter(
                 kisHttpClient,
                 kisRestClient,
                 fxFallbackUrl,
                 fxProbeSymbol,
                 Exchange.valueOf(fxProbeExchange),
-                kisClock);
+                kisClock,
+                fxRateStore);
     }
 }

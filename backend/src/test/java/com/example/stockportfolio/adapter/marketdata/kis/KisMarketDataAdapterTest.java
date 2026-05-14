@@ -83,7 +83,8 @@ class KisMarketDataAdapterTest {
                 baseUrl,
                 "AAPL",
                 Exchange.NAS,
-                proxyClock);
+                proxyClock,
+                new InMemoryFxRateStore());
     }
 
     private void stubTokenIssue() {
