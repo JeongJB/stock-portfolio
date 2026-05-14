@@ -16,9 +16,11 @@ interface Props {
   positions: PositionView[]
   /** 평가액 / 평가손익 컬럼만 가린다. 티커 popover, 당일/수익률/52주 위치는 영향 없음. */
   masked?: boolean
+  /** 리밸런싱 버튼 클릭 콜백. 미지정이면 컬럼 자체를 숨긴다. */
+  onRebalance?: (ticker: string) => void
 }
 
-export function PositionsTable({ positions, masked = false }: Props) {
+export function PositionsTable({ positions, masked = false, onRebalance }: Props) {
   const { currency } = useCurrency()
   const unit = currency === 'USD' ? 'USD' : 'KRW'
 
@@ -51,11 +53,18 @@ export function PositionsTable({ positions, masked = false }: Props) {
             <Th>평가액 ({unit})</Th>
             <Th>평가손익 ({unit})</Th>
             <Th>52주 위치</Th>
+            {onRebalance && <Th>리밸런싱</Th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
           {sorted.map((p) => (
-            <Row key={p.ticker} position={p} currency={currency} masked={masked} />
+            <Row
+              key={p.ticker}
+              position={p}
+              currency={currency}
+              masked={masked}
+              onRebalance={onRebalance}
+            />
           ))}
         </tbody>
       </table>
@@ -67,10 +76,12 @@ function Row({
   position,
   currency,
   masked,
+  onRebalance,
 }: {
   position: PositionView
   currency: 'USD' | 'KRW'
   masked: boolean
+  onRebalance?: (ticker: string) => void
 }) {
   const isUsd = currency === 'USD'
   const avgCost = isUsd ? position.avgCostUsd : position.avgCostKrw
@@ -226,7 +237,44 @@ function Row({
             ratio={position.weekRangeRatio}
         />
       </Td>
+      {onRebalance && (
+        <Td>
+          <button
+            type="button"
+            onClick={() => onRebalance(position.ticker)}
+            disabled={quoteFailed}
+            aria-label={`${position.ticker} 비중 리밸런싱`}
+            title="비중 리밸런싱 계산기"
+            className="inline-flex h-8 w-8 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:text-slate-300 disabled:hover:bg-transparent dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:disabled:text-slate-600 dark:disabled:hover:bg-transparent"
+          >
+            <ScalesIcon />
+          </button>
+        </Td>
+      )}
     </tr>
+  )
+}
+
+function ScalesIcon() {
+  // 양팔저울: 중앙 기둥 + 가로대 + 좌우 받침. 비중 조정의 시각적 메타포.
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4"
+      aria-hidden="true"
+    >
+      <path d="M10 3v13" />
+      <path d="M4 16h12" />
+      <path d="M3 6h14" />
+      <path d="M5 6l-2 4h4z" />
+      <path d="M15 6l-2 4h4z" />
+    </svg>
   )
 }
 

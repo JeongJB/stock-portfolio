@@ -6,6 +6,7 @@ import { AllocationTreemap } from '../components/dashboard/AllocationTreemap'
 import { PositionsTable } from '../components/dashboard/PositionsTable'
 import { AmountMaskToggle } from '../components/dashboard/AmountMaskToggle'
 import { useAmountMask } from '../components/dashboard/useAmountMask'
+import { RebalanceModal } from '../components/dashboard/RebalanceModal'
 import { exportElementAsPng } from '../app/exportImage'
 import { formatKstDate } from '../app/format'
 import { useToast } from '../app/toastContext'
@@ -20,6 +21,7 @@ export function Dashboard() {
   const [exporting, setExporting] = useState(false)
   const { showToast } = useToast()
   const { masked, toggle: toggleMask } = useAmountMask()
+  const [rebalanceTicker, setRebalanceTicker] = useState<string | null>(null)
 
   const handleExport = async () => {
     if (!captureRef.current || exporting) return
@@ -74,7 +76,17 @@ export function Dashboard() {
       </div>
       <SummaryCards data={data} masked={masked} />
       <AllocationTreemap data={data} />
-      <PositionsTable positions={data.positions} masked={masked} />
+      <PositionsTable
+        positions={data.positions}
+        masked={masked}
+        onRebalance={(ticker) => setRebalanceTicker(ticker)}
+      />
+      <RebalanceModal
+        open={rebalanceTicker != null}
+        portfolio={data}
+        initialTicker={rebalanceTicker}
+        onClose={() => setRebalanceTicker(null)}
+      />
     </div>
   )
 }

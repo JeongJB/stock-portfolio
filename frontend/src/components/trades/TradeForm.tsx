@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { recordTrade } from '../../api/client'
 import type { PositionView, RecordTradeRequest, TradeType } from '../../api/types'
@@ -54,6 +55,7 @@ export function TradeForm() {
   const queryClient = useQueryClient()
   const { showToast } = useToast()
   const { positions, isLoading: positionsLoading } = useOwnedPositions()
+  const [searchParams] = useSearchParams()
 
   const [type, setType] = useState<TradeType>('BUY')
   const [fields, setFields] = useState<FormFields>(EMPTY_FIELDS)
@@ -61,6 +63,41 @@ export function TradeForm() {
   const [pastTimeOpen, setPastTimeOpen] = useState(false)
   const [executedAtLocal, setExecutedAtLocal] = useState('') // datetime-local 값
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  // URL 쿼리 prefill: ?type=BUY|SELL&ticker=AAPL&qty=12.
+  // BUY 일 때 ticker 가 보유 종목이면 "추가 매수" 모드 + dropdown 선택, 아니면 "신규 매수" 자유 입력.
+  // positions 가 로드된 뒤에야 buyMode 결정이 가능하므로 effect 안에 가드. ref 로 1회만 적용.
+  const prefilledRef = useRef(false)
+  useEffect(() => {
+    if (prefilledRef.current) return
+    if (positionsLoading) return
+    const qpType = searchParams.get('type')
+    const qpTicker = searchParams.get('ticker')
+    const qpQty = searchParams.get('qty')
+    if (qpType !== 'BUY' && qpType !== 'SELL') {
+      prefilledRef.current = true
+      return
+    }
+    const ticker = qpTicker?.toUpperCase() ?? ''
+    const isOwned = ticker
+      ? positions.some((p) => p.ticker.toUpperCase() === ticker)
+      : false
+    setType(qpType)
+    if (qpType === 'BUY') {
+      setBuyMode(isOwned ? 'add' : 'new')
+    }
+    const sector =
+      qpType === 'BUY'
+        ? (positions.find((p) => p.ticker.toUpperCase() === ticker)?.sector ?? '')
+        : ''
+    setFields({
+      ...EMPTY_FIELDS,
+      ticker,
+      qty: qpQty ?? '',
+      sector: typeof sector === 'string' ? sector : '',
+    })
+    prefilledRef.current = true
+  }, [positionsLoading, positions, searchParams])
 
   const mutation = useMutation({
     mutationFn: recordTrade,
