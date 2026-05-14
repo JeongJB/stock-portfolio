@@ -297,9 +297,8 @@ function pctColor(pct: number | null, isCash: boolean): string {
     return '#cbd5e1' // slate-300 — 등락률 없음 / 보합
   }
   const abs = Math.min(Math.abs(pct), 5)
-  // lightness: 78% (pct≈0) → 38% (pct≥5)
-  const lightness = 78 - (abs / 5) * 40
-  // saturation: 55% → 80%
+  // lightness: 58% (pct≈0) → 18% (pct≥5)
+  const lightness = 58 - (abs / 5) * 40
   const hue = pct > 0 ? 0 : 140 // 0=red, 140=green
   return `hsl(${hue}, 100%, ${lightness}%)`
 }
