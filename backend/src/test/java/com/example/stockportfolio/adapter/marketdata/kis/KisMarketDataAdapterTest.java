@@ -250,8 +250,8 @@ class KisMarketDataAdapterTest {
         assertThat(cached).isEqualByComparingTo("1370.50");
         wireMock.verify(1, getRequestedFor(urlPathEqualTo("/uapi/overseas-price/v1/quotations/price-detail")));
 
-        // TTL 1시간을 초과하도록 시계 점프
-        Instant later = Instant.parse("2026-04-28T00:00:00Z").plus(Duration.ofHours(1)).plusSeconds(1);
+        // TTL 6시간을 초과하도록 시계 점프 — SnapStart snapshot 의 fxCache 유효 윈도우와 일치.
+        Instant later = Instant.parse("2026-04-28T00:00:00Z").plus(Duration.ofHours(6)).plusSeconds(1);
         clockHolder.set(Clock.fixed(later, ZoneOffset.UTC));
         wireMock.resetRequests();
         stubFxKisWithRate("1399.99");

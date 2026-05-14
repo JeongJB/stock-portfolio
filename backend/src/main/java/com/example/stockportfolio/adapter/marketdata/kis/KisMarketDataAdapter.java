@@ -41,7 +41,11 @@ public class KisMarketDataAdapter implements MarketDataPort {
 
     private static final int RATE_SCALE = 2;
 
-    private static final Duration FX_TTL = Duration.ofHours(1);
+    // SnapStart 의 init phase 에서 fxCache 가 priming 되어 snapshot 에 박힌다.
+    // restore 후 첫 invoke 가 cache hit 으로 즉시 응답하도록 TTL 을 충분히 길게 (6시간) 둔다.
+    // 환율 시간당 변동은 미미 — 1인용 빈도 (가끔 사용) 에서 6시간 캐시 정확도 충분.
+    // 1시간으로 두면 snapshot 박힌 직후 1시간 내 호출만 cache hit, 그 후는 매번 cold KIS 호출.
+    private static final Duration FX_TTL = Duration.ofHours(6);
 
     // 미국 주식 주간장 시간(평일 KST 10:00 포함 ~ 17:30 제외) 동안에는 정규장 EXCD 대신 BAY/BAQ/BAA 코드로 조회해야 시세가 잡힌다.
     // 토/일은 한국 주간장이 열리지 않아 시간대와 무관하게 정규장 EXCD 로 직접 조회한다.

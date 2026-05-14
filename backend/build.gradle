@@ -35,11 +35,6 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-function-adapter-aws'
     implementation 'com.amazonaws:aws-lambda-java-events:3.13.0'
 
-    // CRaC 표준 hook. AWS Lambda SnapStart 가 restore phase 에서 Core.getGlobalContext()
-    // 의 등록된 Resource 의 afterRestore() 를 호출 — invoke latency 에 안 잡히면서
-    // socket / TLS handshake / KIS connection 을 미리 만들 수 있다.
-    implementation 'org.crac:crac:1.5.0'
-
     implementation platform('software.amazon.awssdk:bom:2.32.5')
     implementation 'software.amazon.awssdk:dynamodb'
     implementation 'software.amazon.awssdk:ssm'
