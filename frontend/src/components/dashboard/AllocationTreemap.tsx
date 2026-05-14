@@ -300,9 +300,8 @@ function pctColor(pct: number | null, isCash: boolean): string {
   // lightness: 78% (pct≈0) → 38% (pct≥5)
   const lightness = 78 - (abs / 5) * 40
   // saturation: 55% → 80%
-  const saturation = 55 + (abs / 5) * 25
   const hue = pct > 0 ? 0 : 140 // 0=red, 140=green
-  return `hsl(${hue}, ${saturation}%, ${lightness}%)`
+  return `hsl(${hue}, 100%, ${lightness}%)`
 }
 
 function formatChangePct(pct: number | null): string {
