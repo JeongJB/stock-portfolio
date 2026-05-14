@@ -6,6 +6,7 @@ import type { PositionView, RecordTradeRequest, TradeType } from '../../api/type
 import { useToast } from '../../app/toastContext'
 import { formatMoney, formatQty } from '../../app/format'
 import { useOwnedPositions } from './useOwnedPositions'
+import { computeTradePreview, isInvalidPreview } from '../../lib/tradePreview'
 
 const TRADE_TYPES: { type: TradeType; label: string }[] = [
   { type: 'BUY', label: '매수' },
@@ -54,7 +55,7 @@ function isDividend(type: TradeType): boolean {
 export function TradeForm() {
   const queryClient = useQueryClient()
   const { showToast } = useToast()
-  const { positions, isLoading: positionsLoading } = useOwnedPositions()
+  const { positions, totalMarketValueUsd, isLoading: positionsLoading } = useOwnedPositions()
   const [searchParams] = useSearchParams()
 
   const [type, setType] = useState<TradeType>('BUY')
@@ -67,6 +68,10 @@ export function TradeForm() {
   // URL 쿼리 prefill: ?type=BUY|SELL&ticker=AAPL&qty=12.
   // BUY 일 때 ticker 가 보유 종목이면 "추가 매수" 모드 + dropdown 선택, 아니면 "신규 매수" 자유 입력.
   // positions 가 로드된 뒤에야 buyMode 결정이 가능하므로 effect 안에 가드. ref 로 1회만 적용.
+  //
+  // react-hooks/set-state-in-effect 비활성: 이 effect 는 URL 쿼리(외부) + 비동기 query result(외부)
+  // 두 reactive source 와의 1회 동기화 패턴이라 effect 내 setState 가 정당하다. derived state /
+  // useState initializer 로는 비동기 positions 로드를 기다릴 수 없다.
   const prefilledRef = useRef(false)
   useEffect(() => {
     if (prefilledRef.current) return
@@ -82,6 +87,7 @@ export function TradeForm() {
     const isOwned = ticker
       ? positions.some((p) => p.ticker.toUpperCase() === ticker)
       : false
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setType(qpType)
     if (qpType === 'BUY') {
       setBuyMode(isOwned ? 'add' : 'new')
@@ -224,6 +230,19 @@ export function TradeForm() {
   const selectedPosition = fields.ticker
     ? positions.find((p) => p.ticker === fields.ticker)
     : undefined
+
+  // 비중 영향 미리보기 — BUY/SELL 탭에서만 의미. 입력이 부족하면 invalid 로 표시 안 함.
+  const preview =
+    (type === 'BUY' || type === 'SELL') && fields.ticker.trim()
+      ? computeTradePreview({
+          type,
+          ticker: fields.ticker.trim(),
+          qty: Number(fields.qty),
+          price: Number(fields.price),
+          currentPosition: selectedPosition,
+          totalMarketValueUsd,
+        })
+      : null
 
   return (
     <form
@@ -369,6 +388,8 @@ export function TradeForm() {
           </>
         )}
       </div>
+
+      {preview && <WeightPreview preview={preview} />}
 
       <ExecutedAtControl
         open={pastTimeOpen}
@@ -718,6 +739,57 @@ function ExecutedAtControl({
           disabled={disabled}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-500 focus:outline-none disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:disabled:bg-slate-800"
         />
+      )}
+    </div>
+  )
+}
+
+// 비중 영향 미리보기 한 줄. 분모는 totalMarketValueUsd (현금 제외).
+function WeightPreview({
+  preview,
+}: {
+  preview: ReturnType<typeof computeTradePreview>
+}) {
+  if (isInvalidPreview(preview)) {
+    if (preview.reason === 'OVERSELL') {
+      return (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+          매도 수량이 보유 수량을 초과합니다
+        </div>
+      )
+    }
+    return null
+  }
+
+  const fmtPct = (v: number) => `${v.toFixed(2)}%`
+  const deltaSign = preview.deltaPct > 0 ? '+' : preview.deltaPct < 0 ? '−' : ''
+  const deltaAbs = Math.abs(preview.deltaPct).toFixed(2)
+  const deltaColor =
+    preview.deltaPct > 0
+      ? 'text-emerald-700 dark:text-emerald-400'
+      : preview.deltaPct < 0
+        ? 'text-rose-700 dark:text-rose-400'
+        : 'text-slate-500 dark:text-slate-400'
+
+  return (
+    <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300">
+      <span>체결 후 비중: </span>
+      <span className="font-mono tabular-nums font-medium text-slate-900 dark:text-slate-100">
+        {fmtPct(preview.postWeightPct)}
+      </span>
+      {preview.isNewPosition ? (
+        <span className="ml-2 text-slate-500 dark:text-slate-400">(신규)</span>
+      ) : (
+        <span className="ml-2">
+          (현재{' '}
+          <span className="font-mono tabular-nums">{fmtPct(preview.currentWeightPct)}</span>{' '}
+          /{' '}
+          <span className={`font-mono tabular-nums ${deltaColor}`}>
+            {deltaSign}
+            {deltaAbs}%p
+          </span>
+          )
+        </span>
       )}
     </div>
   )

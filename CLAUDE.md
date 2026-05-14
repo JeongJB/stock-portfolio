@@ -22,7 +22,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### 사용자가 명시한 베이스라인 기능
 
-1. 보유 종목 비중 **파이 차트**
+1. 보유 종목 비중 **트리맵** (종목별 / sector 별 토글 — P1-9)
 2. 사용자가 원할 때 총평가액 **스냅샷** → 시계열 **추이 그래프**
 3. **평가자산 vs 순수 투입 자산(원금)** 비교로 손익 가시화
 4. 매수/매도 수동 입력 시 **달러(USD) 현금 잔고 자동 반영** 후 총평가액에 포함
@@ -64,7 +64,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 단위 | 산출물 |
 | --- | --- |
 | FE-0 공통 인프라 | `api/types.ts`(BigDecimal=string, nullable 명시), `api/client.ts`(`VITE_API_BASE_URL` / `VITE_API_KEY`), USD/KRW 컨텍스트(localStorage 영속·기본 KRW), KST 시각·천 단위 포맷 헬퍼, 자체 토스트 시스템, vite dev proxy(`/api` → `:8080`). |
-| FE-1 대시보드 (`/`) | 평가액·원금·평가손익·IRR·단순 수익률 합계 카드 5장 / 보유 비중 파이 차트(현금 슬라이스 포함, 종목별 퍼센트 legend 우측/모바일은 하단) / 포지션 표(시세 실패 행 회색 음영 + `—`) / 우상단 "이미지로 저장" 버튼 (html-to-image PNG, 검은 배경, 파일명 `portfolio-<KST date>.png`). |
+| FE-1 대시보드 (`/`) | 평가액·원금·평가손익·IRR·단순 수익률 합계 카드 5장 / 보유 비중 `AllocationTreemap` (recharts Treemap, 현금 슬라이스 포함, 라벨에 종목·퍼센트 표시, 종목별/sector 별 토글은 P1-9 에서 추가) / 포지션 표(시세 실패 행 회색 음영 + `—`) / 우상단 "이미지로 저장" 버튼 (html-to-image PNG, 검은 배경, 파일명 `portfolio-<KST date>.png`). |
 | FE-2 거래 입력 (`/trades`) | BUY/SELL/DIVIDEND/DEPOSIT/WITHDRAW 5종 탭, 같은 페이지 머무름 + 토스트, 4xx/5xx 응답 본문 그대로 노출, `executedAt` 토글로 과거 시각 입력. (DIVIDEND 는 P1-5 에서 추가) |
 | FE-3 스냅샷 추이 (`/snapshots`) | 평가액·원금 두 라인 차트(USD/KRW 즉시 토글), 호버에 `usdKrwRate` 표시, 박제 시 갱신/저장 분기 토스트, 0건 빈 상태 안내. 기간 선택(1달/3달/6달/1년/5년/사용자 지정, 디폴트 1달, localStorage 영속). 차트 위에 기간 평가액 상승률 카드 ((최근 - 가장 오래된)/가장 오래된, 입금·출금 미보정 단순 변화율). |
 
@@ -121,7 +121,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Vite + React + TypeScript** — Vite는 CRA를 대체하는 표준 번들러
 - **PWA** — `vite-plugin-pwa` (Workbox 기반)
-- **차트**: `recharts` (파이/라인 모두 React 친화적)
+- **차트**: `recharts` (트리맵/라인 모두 React 친화적)
 - **데이터 패칭**: `@tanstack/react-query` (캐싱·로딩 상태 단순화)
 - **라우팅**: `react-router-dom`
 - **스타일**: `tailwindcss` v4 (`@tailwindcss/vite` 플러그인)
