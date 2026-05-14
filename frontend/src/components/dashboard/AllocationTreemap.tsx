@@ -159,7 +159,7 @@ export function AllocationTreemap({ data, includeCash }: Props) {
                     y={sectorNode.y0 + SECTOR_HEADER_HEIGHT / 2 + 1}
                     dominantBaseline="middle"
                     fontSize={11}
-                    fontWeight={600}
+                    fontWeight={700}
                     className="fill-slate-600 dark:fill-slate-300"
                     style={{ pointerEvents: 'none' }}
                   >
@@ -221,7 +221,7 @@ export function AllocationTreemap({ data, includeCash }: Props) {
                       textAnchor="middle"
                       dominantBaseline="middle"
                       fontSize={tickerFontSize}
-                      fontWeight={500}
+                      fontWeight={700}
                       fill="#fff"
                       style={{ pointerEvents: 'none' }}
                     >
