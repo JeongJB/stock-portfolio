@@ -107,27 +107,52 @@ sam deploy --parameter-overrides LambdaReservedConcurrency=0 \
   --no-confirm-changeset --region ap-northeast-2
 ```
 
-## Lambda SnapStart
+## Lambda SnapStart + cold start 최적화
 
-콜드 스타트 5~10s → 1~2s 단축을 위해 SnapStart 가 활성화돼 있다 (`SnapStart: ApplyOn: PublishedVersions` + `AutoPublishAlias: live`).
+콜드 첫 호출 wall clock 6.2s → ~2-2.5s 단축. SnapStart 기본 (`SnapStart: ApplyOn: PublishedVersions` + `AutoPublishAlias: live`) + 4단계 추가 최적화.
 
-- 매 배포에서 SAM 이 자동으로 새 버전 발행 → snapshot 생성 → `live` alias 갱신 → API Gateway integration 과 Lambda permission 까지 alias ARN 으로 박는다.
+### 동작
+
+- 매 배포에서 SAM 이 새 버전 발행 → snapshot 생성 → `live` alias 갱신 → API Gateway integration / Lambda permission 까지 alias ARN 으로 박음.
 - 함수 코드/설정 변경이 없는 배포는 새 버전 발행 자체를 건너뛰어 snapshot 재생성 비용 없음.
-- **첫 SnapStart 활성화 배포만** snapshot 빌드로 평소보다 5~15분 더 걸린다. 이후 배포는 정상.
-- snapshot 상태 확인:
-
-  ```bash
-  aws lambda get-function \
-    --function-name stock-portfolio-prod-api \
-    --qualifier live \
-    --region $REGION \
-    --query 'Configuration.SnapStart'
-  # ApplyOn=PublishedVersions, OptimizationStatus=On 이어야 정상.
-  ```
-
-- 임시로 SnapStart 끄고 싶다면 template `SnapStart.ApplyOn` 을 `None` 으로 바꿔 deploy. AutoPublishAlias 는 그대로 둬도 무해 (alias 만 새 버전 가리킴).
+- **첫 SnapStart 활성화 배포만** snapshot 빌드로 평소보다 5~15분 더 걸림. 이후 배포는 정상.
 - snapshot 은 14일 idle 시 자동 폐기되며 다음 호출에서 자동 재생성 — 1인용 빈도에선 무관.
+
+### 4단계 최적화
+
+| 단계 | 내용 |
+|---|---|
+| KIS RestClient connection pool | `KisMarketDataConfig.kisRestClient`: `SimpleClientHttpRequestFactory` (매 호출 새 TCP) → `JdkClientHttpRequestFactory` + JDK `HttpClient` (HTTP/2 + keep-alive). |
+| `SnapStartWarmup` init priming | `@PostConstruct` 에서 `dynamoDbClient.describeTable` + `marketDataPort.getUsdKrwRate()` 호출 → DDB SDK lazy init, KIS access token (DDB), SSM credentials, fxCache 모두 채워 snapshot 에 박힘. |
+| DDB persistent `FxRateStore` | `META#fx / USD_KRW` 항목. `getUsdKrwRate()` 3-layer (in-memory → DDB → KIS/fallback). SnapStart 의 init phase 2회 race (두 번째 init 이 KIS EGW00133 으로 거부) 해소. |
+| `FX_TTL` 1h → 6h | snapshot 박힌 fxCache 의 유효 윈도우 확장. 환율 시간당 변동 미미 → 1인용에 충분. |
+
+### 상태 확인
+
+```bash
+aws lambda get-function \
+  --function-name stock-portfolio-prod-api \
+  --qualifier live \
+  --region $REGION \
+  --query 'Configuration.SnapStart'
+# ApplyOn=PublishedVersions, OptimizationStatus=On 이어야 정상.
+
+# warmup 동작 확인 (init phase 로그)
+aws logs filter-log-events --log-group-name /aws/lambda/stock-portfolio-prod-api \
+  --filter-pattern "SnapStartWarmup" --region $REGION \
+  --max-items 20 --query 'events[].message' --output text
+# "SnapStartWarmup: getUsdKrwRate OK rate=..." 가 보여야 정상.
+# 두 번째 INIT 의 priming 이 DDB hit 으로 빠르게(<100ms) 끝나야 함.
+```
+
+### 임시 비활성화 / 롤백
+
+- 임시로 SnapStart 끄고 싶다면 template `SnapStart.ApplyOn` 을 `None` 으로 바꿔 deploy. AutoPublishAlias 는 그대로 둬도 무해.
 - **롤백**: git revert + `infra/deploy.sh` 만으로 충분. alias 가 자동으로 직전 안정 버전을 가리킨다.
+
+### IAM 1회 작업
+
+`SnapStartWarmup` 이 priming 으로 `dynamodb:DescribeTable` 을 호출하므로 SAM template `LambdaExecutionRole` 의 `PortfolioTableAccess` 정책에 해당 액션이 박혀 있어야 함. 누락 시 priming 실패 + cold first invoke 가 다시 느려짐.
 
 ## 트러블슈팅 (실제 겪은 것 위주)
 
@@ -140,6 +165,8 @@ sam deploy --parameter-overrides LambdaReservedConcurrency=0 \
 | DynamoDB `Query condition missed key schema element: PK` | 코드는 소문자 `pk/sk`, template KeySchema 가 대문자였던 케이스 불일치 | template KeySchema 가 소문자 `pk/sk/gsi1pk/gsi1sk` 인지 확인 — 이미 적용됨 |
 | 브라우저 CORS error | `Method: ANY` 가 OPTIONS preflight 까지 잡아 ApiKeyRequired 적용 → 403 | OPTIONS 만 별도 라우트 + `ApiKeyRequired: false` 로 분리 — 이미 적용됨 |
 | Lambda 첫 호출이 여전히 5~10초 느림 | SnapStart 가 활성화돼 있어도 직전 배포에서 새 버전이 발행되지 않았거나 (코드/설정 무변경) snapshot 재사용이 아직 안 된 케이스 | 평소: 1~2s 대로 단축됨. 첫 SnapStart 활성 배포 직후엔 snapshot 빌드 5~15분 진행 중일 수 있다. `aws lambda get-function --function-name stock-portfolio-prod-api --qualifier live` 로 `SnapStart.OptimizationStatus=On` 인지 확인 |
+| `SnapStartWarmup: getUsdKrwRate 실패 (무시): java.lang.IllegalStateException: FX 폴백 응답...` (init 로그) + cold first invoke 의 fxRate 가 1초+ | SnapStart deploy 시 init phase 2회 실행 → 두 번째 init 의 KIS access token 발급이 EGW00133 (1분당 1회) 으로 거부 + frankfurter fallback 도 실패 → snapshot 의 fxCache 빈 상태 | `FxRateStore` (DDB persistent fxCache) 가 적용됐는지 확인. 두 번째 init 이 DDB hit 으로 회피 가능. `META#fx / USD_KRW` 항목 존재 확인: `aws dynamodb get-item --table-name Portfolio --key '{"pk":{"S":"META#fx"},"sk":{"S":"USD_KRW"}}'` |
+| cold first invoke 의 `load=N초` 가 큼 (priming 적용 후에도) | `dynamodb:DescribeTable` IAM 권한 누락 → `SnapStartWarmup` 의 DDB priming 실패 → SDK lazy init 이 view() 의 첫 호출에서 발생 | `LambdaExecutionRole.PortfolioTableAccess` 에 `dynamodb:DescribeTable` 추가 확인. CloudWatch Logs 에서 `SnapStartWarmup: DDB describeTable 실패` 로그가 있으면 권한 문제 |
 | `aws-sam-cli-managed-default` 첫 생성 실패 | S3 또는 IAM 권한 부족 | IAM 사용자에 권한 추가 후 재시도 |
 | `LogGroup ... already exists` | Lambda 가 첫 호출 시 자동 생성한 로그 그룹과 CFN 정의 충돌 | `aws logs delete-log-group --log-group-name /aws/lambda/stock-portfolio-prod-api --region $REGION` 후 `sam deploy` 재시도 |
 | 알람 메일이 오지 않음 | SNS email 구독이 PendingConfirmation 상태 | `surpatience@gmail.com` 받은편지함에서 "Confirm subscription" 링크 클릭 (스팸함도 확인) |
