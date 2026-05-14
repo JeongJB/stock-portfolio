@@ -16,7 +16,6 @@ interface ListLeaf {
 
 interface ListBranch {
   sector: string
-  weight: number
   children: ListLeaf[]
 }
 
@@ -25,8 +24,9 @@ const CASH_SECTOR = '현금'
 const CASH_TICKER = 'USD 현금'
 
 /**
- * sector 그룹화 + 정렬된 비중 리스트. Treemap 옆에 정확한 숫자 보조 정보용.
- * weight 는 0~1. 막대 너비 = weight * 100 (전체 영역 대비 비중 — 종목 간 직접 비교 가능).
+ * sector 그룹화 + 비중 정렬된 종목 pill grid.
+ * 각 종목 = pill (rounded chip). pill 배경 색 강도 = 종목 비중 / 전체 최대 비중 (5단계).
+ * 비중 큰 종목이 시각적으로 두드러진다. 등락률·평가액은 PositionsTable 에 위임 — 여기엔 ticker + 비중만.
  */
 export function AllocationList({ data, includeCash }: Props) {
   const { currency } = useCurrency()
@@ -36,38 +36,38 @@ export function AllocationList({ data, includeCash }: Props) {
     return null
   }
 
+  const maxWeight = Math.max(
+    ...branches.flatMap((b) => b.children.map((l) => l.weight)),
+    0,
+  )
+
   return (
-    <ul className="space-y-3 text-xs">
+    <ul className="space-y-3">
       {branches.map((branch) => (
         <li key={branch.sector}>
-          <div className="flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-200">
-            <span>{branch.sector}</span>
-            <span className="font-mono tabular-nums">{formatPct(branch.weight)}</span>
+          <div className="mb-1.5 text-sm font-medium text-slate-700 dark:text-slate-200">
+            {branch.sector}
           </div>
-          <ul className="mt-1 space-y-1 pl-1">
-            {branch.children.map((leaf) => (
-              <li
-                key={leaf.ticker}
-                className="flex items-center gap-2 text-slate-600 dark:text-slate-300"
-                title={`${leaf.ticker} · ${formatPct(leaf.weight)} · ${formatMoney(leaf.marketValue, currency)}`}
-              >
-                <span className="w-14 shrink-0 truncate font-mono">{leaf.ticker}</span>
-                <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                  <div
-                    className={
-                      leaf.isCash
-                        ? 'absolute inset-y-0 left-0 rounded-full bg-slate-400 dark:bg-slate-500'
-                        : 'absolute inset-y-0 left-0 rounded-full bg-slate-500 dark:bg-slate-400'
-                    }
-                    style={{ width: `${Math.min(100, leaf.weight * 100)}%` }}
-                  />
-                </div>
-                <span className="w-12 shrink-0 text-right font-mono tabular-nums">
-                  {formatPct(leaf.weight)}
+          <div className="flex flex-wrap gap-1.5">
+            {branch.children.map((leaf) => {
+              const intensity = maxWeight > 0 ? leaf.weight / maxWeight : 0
+              return (
+                <span
+                  key={leaf.ticker}
+                  className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${pillClasses(
+                    intensity,
+                  )}`}
+                  title={`${leaf.ticker} · ${formatPct(leaf.weight)} · ${formatMoney(
+                    leaf.marketValue,
+                    currency,
+                  )}`}
+                >
+                  <span className="font-mono font-semibold">{leaf.ticker}</span>
+                  <span className="tabular-nums opacity-90">{formatPct(leaf.weight)}</span>
                 </span>
-              </li>
-            ))}
-          </ul>
+              )
+            })}
+          </div>
         </li>
       ))}
     </ul>
@@ -116,11 +116,10 @@ function buildBranches(
   const branches: ListBranch[] = Array.from(grouped.entries())
     .map(([sector, children]) => ({
       sector,
-      weight: children.reduce((s, l) => s + l.weight, 0),
       // sector 안에서도 비중 큰 종목 먼저.
       children: children.slice().sort((a, b) => b.weight - a.weight),
     }))
-    .sort((a, b) => b.weight - a.weight)
+    .sort((a, b) => sumWeight(b.children) - sumWeight(a.children))
 
   // 현금 포함 모드 시에만 "현금" sector 추가 (가장 아래에 고정).
   if (includeCash) {
@@ -128,7 +127,6 @@ function buildBranches(
     if (Number.isFinite(cashWeight) && cashWeight > 0) {
       branches.push({
         sector: CASH_SECTOR,
-        weight: cashWeight,
         children: [
           {
             ticker: CASH_TICKER,
@@ -142,6 +140,30 @@ function buildBranches(
   }
 
   return branches
+}
+
+function sumWeight(leaves: ListLeaf[]): number {
+  return leaves.reduce((s, l) => s + l.weight, 0)
+}
+
+/**
+ * 비중 강도(0~1) → pill Tailwind 클래스. 5단계 — 비중 큰 종목이 진하게.
+ * 다크 모드는 contrast 위해 반전 (어두운 배경에선 진한 종목 = 밝은 pill).
+ */
+function pillClasses(intensity: number): string {
+  if (intensity >= 0.8) {
+    return 'bg-slate-800 text-slate-50 dark:bg-slate-100 dark:text-slate-900'
+  }
+  if (intensity >= 0.6) {
+    return 'bg-slate-600 text-slate-50 dark:bg-slate-300 dark:text-slate-900'
+  }
+  if (intensity >= 0.4) {
+    return 'bg-slate-400 text-slate-50 dark:bg-slate-500 dark:text-slate-50'
+  }
+  if (intensity >= 0.2) {
+    return 'bg-slate-300 text-slate-700 dark:bg-slate-600 dark:text-slate-100'
+  }
+  return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
 }
 
 function formatPct(weight: number): string {
