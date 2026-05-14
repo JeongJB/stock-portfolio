@@ -11,6 +11,9 @@ import { formatMoney, formatPercent } from '../../app/format'
 
 interface Props {
   data: PortfolioView
+  // true: 현금 포함 (응답의 weight 그대로, "현금" sector 표시).
+  // false: 현금 제외 (분모 재계산 = 종목 합계, 현금 sector 숨김).
+  includeCash: boolean
 }
 
 // 종목 leaf 노드: 종목 1개 = 사각형 1개.
@@ -59,7 +62,7 @@ const CELL_INNER_PADDING = 1
 // 컨테이너 기본 높이 (Tailwind h-72 와 동기). 초기 render 시 size 측정 전 fallback.
 const DEFAULT_HEIGHT = 288
 
-export function AllocationTreemap({ data }: Props) {
+export function AllocationTreemap({ data, includeCash }: Props) {
   const { currency } = useCurrency()
   const containerRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<{ width: number; height: number }>({
@@ -81,7 +84,7 @@ export function AllocationTreemap({ data }: Props) {
     return () => ro.disconnect()
   }, [])
 
-  const tree = useMemo(() => buildTree(data, currency), [data, currency])
+  const tree = useMemo(() => buildTree(data, currency, includeCash), [data, currency, includeCash])
 
   const layout: HierarchyRectangularNode<NodeData> | null = useMemo(() => {
     if (size.width <= 0 || size.height <= 0) return null
@@ -102,19 +105,14 @@ export function AllocationTreemap({ data }: Props) {
 
   if (tree.children.length === 0) {
     return (
-      <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-        <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
-        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-          표시할 비중 데이터가 없습니다. (시세 조회가 모두 실패했거나 보유 자산이 없습니다.)
-        </p>
-      </section>
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        표시할 비중 데이터가 없습니다. (시세 조회가 모두 실패했거나 보유 자산이 없습니다.)
+      </p>
     )
   }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
-      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-200">자산 비중</h3>
-      <div ref={containerRef} className="relative mt-2 h-72 w-full">
+    <div ref={containerRef} className="relative h-72 w-full">
         {layout && size.width > 0 && (
           <svg width={size.width} height={size.height}>
             {/* sector 영역: 외곽 + 상단 헤더(이름) */}
@@ -276,8 +274,7 @@ export function AllocationTreemap({ data }: Props) {
             )}
           </div>
         )}
-      </div>
-    </section>
+    </div>
   )
 }
 
@@ -285,7 +282,7 @@ function isLeaf(node: NodeData): node is Leaf {
   return (node as Leaf).ticker != null
 }
 
-function buildTree(data: PortfolioView, currency: 'USD' | 'KRW'): TreeRoot {
+function buildTree(data: PortfolioView, currency: 'USD' | 'KRW', includeCash: boolean): TreeRoot {
   const grouped = new Map<string, Leaf[]>()
   for (const p of data.positions) {
     if (p.weight == null) continue
@@ -306,26 +303,43 @@ function buildTree(data: PortfolioView, currency: 'USD' | 'KRW'): TreeRoot {
     grouped.set(sector, leaves)
   }
 
+  // 현금 제외 모드: 종목 weight 합으로 재정규화 (분모 = 주식 가치만). 시각적 비례는 그대로 유지.
+  if (!includeCash) {
+    const totalStockWeight = Array.from(grouped.values()).reduce(
+      (sum, leaves) => sum + leaves.reduce((s, l) => s + l.weight, 0),
+      0,
+    )
+    if (totalStockWeight > 0) {
+      for (const leaves of grouped.values()) {
+        for (const leaf of leaves) {
+          leaf.weight = leaf.weight / totalStockWeight
+        }
+      }
+    }
+  }
+
   // sector 별 합계 비중으로 정렬 (큰 sector 가 좌상단). 알파벳 정렬보다 시각적으로 자연스러움.
   const sectorBranches: Branch[] = Array.from(grouped.entries())
     .map(([sector, children]) => ({ sector, children }))
     .sort((a, b) => sumWeight(b.children) - sumWeight(a.children))
 
-  // 현금은 별도 "현금" sector 로 묶임.
-  const cashWeight = Number(data.cashWeight)
-  if (Number.isFinite(cashWeight) && cashWeight > 0) {
-    sectorBranches.push({
-      sector: CASH_SECTOR,
-      children: [
-        {
-          ticker: CASH_TICKER,
-          weight: cashWeight,
-          marketValue: currency === 'USD' ? data.cashUsd : data.cashKrw,
-          dailyChangePct: null,
-          isCash: true,
-        },
-      ],
-    })
+  // 현금 포함 모드 시에만 "현금" sector 추가.
+  if (includeCash) {
+    const cashWeight = Number(data.cashWeight)
+    if (Number.isFinite(cashWeight) && cashWeight > 0) {
+      sectorBranches.push({
+        sector: CASH_SECTOR,
+        children: [
+          {
+            ticker: CASH_TICKER,
+            weight: cashWeight,
+            marketValue: currency === 'USD' ? data.cashUsd : data.cashKrw,
+            dailyChangePct: null,
+            isCash: true,
+          },
+        ],
+      })
+    }
   }
 
   return { name: 'root', children: sectorBranches }

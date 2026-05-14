@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getPortfolio } from '../api/client'
 import { SummaryCards } from '../components/dashboard/SummaryCards'
-import { AllocationTreemap } from '../components/dashboard/AllocationTreemap'
+import { AllocationPanel } from '../components/dashboard/AllocationPanel'
 import { PositionsTable } from '../components/dashboard/PositionsTable'
 import { AmountMaskToggle } from '../components/dashboard/AmountMaskToggle'
 import { useAmountMask } from '../components/dashboard/useAmountMask'
@@ -75,7 +75,7 @@ export function Dashboard() {
         </button>
       </div>
       <SummaryCards data={data} masked={masked} />
-      <AllocationTreemap data={data} />
+      <AllocationPanel data={data} />
       <PositionsTable
         positions={data.positions}
         masked={masked}
