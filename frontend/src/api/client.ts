@@ -7,7 +7,8 @@ import type {
   TradeView,
 } from './types'
 
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '') as string
+// same-origin (CloudFront /api/* 라우팅) 이라 절대 URL 불필요 — relative path 그대로.
+// dev 환경은 vite proxy (/api → :8080) 가 같은 origin 으로 보이게 만들어준다.
 const API_KEY = (import.meta.env.VITE_API_KEY ?? '') as string
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -18,7 +19,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (API_KEY) headers.set('x-api-key', API_KEY)
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+  const res = await fetch(path, { ...init, headers })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`)
