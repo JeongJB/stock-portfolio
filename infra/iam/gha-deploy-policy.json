@@ -191,7 +191,7 @@
         "scheduler:ListTagsForResource"
       ],
       "Resource": [
-        "arn:aws:scheduler:ap-northeast-2:<ACCOUNT_ID>:schedule/default/stock-portfolio-*"
+        "arn:aws:scheduler:ap-northeast-2:<ACCOUNT_ID>:schedule/default/ScheduledSnapshotFunction*"
       ]
     },
     {
