@@ -59,6 +59,10 @@ public class PortfolioApplicationService {
     // view() 의 종목별 시세 조회 병렬화용 풀. 1인용 종목 수와 KIS 동시 호출 한도를 고려해 보수적으로 8.
     // Lambda 단일 인스턴스 재사용 가정으로 1회 생성 후 재사용 (shutdown 훅 미설치 — 컨테이너 종료에 맡김).
     private static final int QUOTE_FETCH_POOL_SIZE = 8;
+    // 시세 조회 일시 실패(KIS rate limit, 네트워크 hiccup) 흡수용 retry. 모든 종목 병렬 처리라
+    // 동시 sleep 이고, 모두 실패해도 추가 지연은 최대 (QUOTE_FETCH_RETRY_DELAY_MS × QUOTE_FETCH_MAX_RETRIES).
+    private static final int QUOTE_FETCH_MAX_RETRIES = 3;
+    private static final long QUOTE_FETCH_RETRY_DELAY_MS = 1000L;
 
     private final PortfolioRepository repository;
     private final MarketDataPort marketDataPort;
@@ -387,7 +391,7 @@ public class PortfolioApplicationService {
                         if (meta.sector() != null) {
                             sectorByTicker.put(p.ticker(), meta.sector());
                         }
-                        Quote quote = marketDataPort.getQuote(p.ticker(), meta.exchange());
+                        Quote quote = fetchQuoteWithRetry(p.ticker(), meta.exchange());
                         quoteByTicker.put(p.ticker(), quote);
                         exchangeResolver.onQuoteSuccess(p.ticker(), clock.instant());
                     } catch (RuntimeException ex) {
@@ -520,6 +524,32 @@ public class PortfolioApplicationService {
                 quoteAsOf,
                 quoteByTicker.size(),
                 sortedPositions.size());
+    }
+
+    /**
+     * 시세 조회 일시 실패(KIS rate limit / 네트워크 hiccup) 흡수용 retry.
+     * 첫 시도 실패 시 1초 sleep 후 재시도하며, 재시도는 최대 {@value #QUOTE_FETCH_MAX_RETRIES} 회 (총 시도 4회).
+     * 모두 실패하면 마지막 예외를 그대로 propagate — 호출자(view 람다)가 onQuoteFailure + warn 처리.
+     */
+    private Quote fetchQuoteWithRetry(String ticker, Exchange exchange) {
+        int totalAttempts = QUOTE_FETCH_MAX_RETRIES + 1;
+        RuntimeException lastFailure = null;
+        for (int attempt = 1; attempt <= totalAttempts; attempt++) {
+            try {
+                return marketDataPort.getQuote(ticker, exchange);
+            } catch (RuntimeException ex) {
+                lastFailure = ex;
+                if (attempt < totalAttempts) {
+                    try {
+                        Thread.sleep(QUOTE_FETCH_RETRY_DELAY_MS);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("시세 retry sleep 중단 ticker=" + ticker, ie);
+                    }
+                }
+            }
+        }
+        throw lastFailure;
     }
 
     /**
