@@ -174,7 +174,24 @@
         "iam:PassRole"
       ],
       "Resource": [
-        "arn:aws:iam::<ACCOUNT_ID>:role/stock-portfolio-prod-lambda-role"
+        "arn:aws:iam::<ACCOUNT_ID>:role/stock-portfolio-prod-lambda-role",
+        "arn:aws:iam::<ACCOUNT_ID>:role/stock-portfolio-*ScheduledSnapshotFunction*"
+      ]
+    },
+    {
+      "Sid": "EventBridgeScheduler",
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:CreateSchedule",
+        "scheduler:UpdateSchedule",
+        "scheduler:DeleteSchedule",
+        "scheduler:GetSchedule",
+        "scheduler:TagResource",
+        "scheduler:UntagResource",
+        "scheduler:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:ap-northeast-2:<ACCOUNT_ID>:schedule/default/stock-portfolio-*"
       ]
     },
     {

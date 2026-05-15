@@ -288,6 +288,67 @@ Resources:
             Auth:
               ApiKeyRequired: false
 
+  # === 자동 스냅샷 cron — 매일 KST 23:30 ===
+  # 별도 Lambda 함수로 분리 (같은 jar, 같은 Role, FUNCTION_DEFINITION 만 다름).
+  # API 함수와 분리한 이유:
+  #   - dispatcher 코드 없이 SCF 가 함수명만으로 라우팅
+  #   - 일 1회 호출이라 SnapStart 빌드 비용을 들일 이유가 없음 (의도적 미적용)
+  #   - 알람·로그 분리로 사용자 트래픽 vs 자동 작업 가시성 구분
+  # EventBridge Scheduler (ScheduleV2) 가 cron(30 23 * * ? *) Asia/Seoul 로 직접 invoke.
+  # 무료 티어 월 1400만 invocation 안쪽이라 추가 비용 0.
+  ScheduledSnapshotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub stock-portfolio-${Stage}-snapshot-cron
+      Runtime: java25
+      Handler: org.springframework.cloud.function.adapter.aws.FunctionInvoker
+      CodeUri: ../backend/build/libs/stock-portfolio-0.0.1-SNAPSHOT-aws.jar
+      Role: !GetAtt LambdaExecutionRole.Arn
+      MemorySize: !Ref LambdaMemoryMb
+      Timeout: !Ref LambdaTimeoutSeconds
+      Environment:
+        Variables:
+          TZ: Asia/Seoul
+          SPRING_CLOUD_FUNCTION_DEFINITION: scheduledSnapshotHandler
+          PORTFOLIO_TABLE_NAME: !Ref TableName
+          KIS_APPKEY_PARAMETER: !Ref KisAppKeyParameter
+          KIS_APPSECRET_PARAMETER: !Ref KisAppSecretParameter
+      Events:
+        DailySnapshot:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(30 23 * * ? *)
+            ScheduleExpressionTimezone: Asia/Seoul
+            Description: 매일 KST 23:30 포트폴리오 스냅샷 자동 박제
+
+  ScheduledSnapshotLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/stock-portfolio-${Stage}-snapshot-cron
+      RetentionInDays: !Ref LogRetentionDays
+
+  ScheduledSnapshotErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub stock-portfolio-${Stage}-snapshot-cron-errors
+      AlarmDescription: 자동 스냅샷 Lambda Errors > 0 (KIS 시세 실패·DDB 장애 시 메일 통지).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ScheduledSnapshotFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+
   # === FE-5f: 운영 가시성 (로그 보존 + 알람 1개) ===
   # Lambda 가 첫 호출 시 같은 이름의 로그 그룹을 자동 생성한다. 이미 자동 생성된 상태에서
   # CFN 으로 새로 만들려 하면 AlreadyExistsException → 사용자가 사전에 기존 로그 그룹을 삭제해야

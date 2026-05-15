@@ -141,6 +141,26 @@ public class LambdaConfig {
         };
     }
 
+    /**
+     * EventBridge Scheduler 가 매일 KST 23:30 에 호출하는 자동 스냅샷 함수.
+     * 입력 페이로드는 사용하지 않는다 (Scheduler payload 가 비어 있어도 SCF 가 `{}` 로 전달).
+     * 실패 시 예외를 전파해 Lambda Errors 메트릭이 +1 되도록 두면 SNS 알람이 작동한다.
+     */
+    @Bean
+    public Function<Map<String, Object>, Map<String, Object>> scheduledSnapshotHandler(
+            PortfolioApplicationService service) {
+
+        return event -> {
+            log.info("scheduled snapshot trigger received");
+            SnapshotView snapshot = service.takeSnapshot();
+            log.info("scheduled snapshot saved: date={} totalAssetsUsd={}",
+                    snapshot.date(), snapshot.totalAssetsUsd());
+            return Map.of(
+                    "status", "ok",
+                    "date", snapshot.date().toString());
+        };
+    }
+
     private static APIGatewayProxyResponseEvent preflight() {
         return new APIGatewayProxyResponseEvent()
                 .withStatusCode(204)
