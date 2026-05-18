@@ -44,13 +44,13 @@ public class LambdaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(LambdaConfig.class);
 
-    // CloudFront 가 origin custom header 로 주입하는 공유 시크릿. 미설정(로컬 단위 테스트) 시
-    // 검증을 건너뛴다 — 운영 Lambda 는 SAM 이 항상 ORIGIN_VERIFY_SECRET 환경변수를 주입한다.
-    private static final String ORIGIN_VERIFY_SECRET = resolveOriginVerifySecret();
+    // 운영 Lambda 는 CORS_ALLOWED_ORIGIN 환경변수가 항상 박혀 있다 (SAM 에서 주입).
+    // 로컬 개발 / 단위 테스트 환경 호환을 위해 미설정 시에만 와일드카드로 폴백.
+    private static final String CORS_ALLOWED_ORIGIN = resolveAllowedOrigin();
 
-    private static String resolveOriginVerifySecret() {
-        String env = System.getenv("ORIGIN_VERIFY_SECRET");
-        return (env == null || env.isBlank()) ? null : env;
+    private static String resolveAllowedOrigin() {
+        String env = System.getenv("CORS_ALLOWED_ORIGIN");
+        return (env == null || env.isBlank()) ? "*" : env;
     }
 
     @Bean
@@ -63,11 +63,10 @@ public class LambdaConfig {
                 String method = event.getHttpMethod() != null ? event.getHttpMethod() : "GET";
                 String path = event.getPath() != null ? event.getPath() : "";
 
-                // CloudFront 경유 검증 — origin custom header X-Origin-Verify 가
-                // ORIGIN_VERIFY_SECRET 과 일치하지 않으면 즉시 403. API key 가 leak 돼도
-                // CloudFront 우회 직접 호출은 여기서 차단된다.
-                if (!verifyOrigin(event)) {
-                    return forbidden();
+                // CORS preflight: SAM 의 Cors Mock 이 Path: /api/{proxy+} + Method: ANY 와
+                // 충돌해 ANY 가 OPTIONS 를 잡아챌 수 있다. Lambda 가 직접 응답해 안전하게.
+                if ("OPTIONS".equalsIgnoreCase(method)) {
+                    return preflight();
                 }
 
                 if ("GET".equalsIgnoreCase(method) && path.endsWith("/api/portfolio")) {
@@ -162,29 +161,14 @@ public class LambdaConfig {
         };
     }
 
-    /**
-     * CloudFront origin custom header (X-Origin-Verify) 와 ORIGIN_VERIFY_SECRET 비교.
-     * 환경변수가 미설정(local 단위 테스트) 이면 검증을 통과시킨다.
-     * APIGatewayProxyRequestEvent.getHeaders() 는 헤더명을 그대로 보존하므로 case-insensitive 매치 필요.
-     */
-    private static boolean verifyOrigin(APIGatewayProxyRequestEvent event) {
-        if (ORIGIN_VERIFY_SECRET == null) {
-            return true;
-        }
-        Map<String, String> headers = event.getHeaders();
-        if (headers == null) {
-            return false;
-        }
-        for (Map.Entry<String, String> e : headers.entrySet()) {
-            if (e.getKey() != null && e.getKey().equalsIgnoreCase("X-Origin-Verify")) {
-                return ORIGIN_VERIFY_SECRET.equals(e.getValue());
-            }
-        }
-        return false;
-    }
-
-    private static APIGatewayProxyResponseEvent forbidden() {
-        return response(403, "{\"error\":\"forbidden\"}");
+    private static APIGatewayProxyResponseEvent preflight() {
+        return new APIGatewayProxyResponseEvent()
+                .withStatusCode(204)
+                .withHeaders(Map.of(
+                        "Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN,
+                        "Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+                        "Access-Control-Allow-Headers", "Content-Type,x-api-key",
+                        "Access-Control-Max-Age", "3600"));
     }
 
     private static APIGatewayProxyResponseEvent ok(String body) {
@@ -251,7 +235,11 @@ public class LambdaConfig {
     private static APIGatewayProxyResponseEvent response(int status, String body) {
         return new APIGatewayProxyResponseEvent()
                 .withStatusCode(status)
-                .withHeaders(Map.of("Content-Type", "application/json"))
+                .withHeaders(Map.of(
+                        "Content-Type", "application/json",
+                        // CloudFront 도메인에서 호출되는 SPA 라 actual response 에도 CORS 헤더 필수.
+                        // API Gateway Cors 설정은 OPTIONS preflight 만 처리하고 GET/POST 응답엔 영향 없다.
+                        "Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN))
                 .withBody(body);
     }
 

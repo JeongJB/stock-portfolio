@@ -90,7 +90,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | FE: 손익 페이지 | `/pnl` 신규 페이지 + 헤더 메뉴 "손익". PeriodSelector(스냅샷과 동일 6옵션) + 월별/연별 토글. SELL 의 실현 손익 + DIVIDEND 합산을 KST 기준 월/연 단위로 그룹. USD 만 표시. 백엔드는 `TradeView` 에 `realizedPnlUsd` 필드 추가 (SELL 만, 시간순 평균단가 기반 계산). |
 | infra: Lambda SnapStart + cold start 최적화 | `BackendFunction` 에 `SnapStart: ApplyOn: PublishedVersions` + `AutoPublishAlias: live` 두 줄 추가. SAM 이 매 배포마다 새 버전 publish → snapshot 생성 → `live` alias 갱신 → API Gateway integration / Lambda permission 자동으로 alias ARN 으로 박음. 추가로 cold start 페널티 분해 측정 후 4단계 최적화: (1) **KIS RestClient connection pool**: `SimpleClientHttpRequestFactory` (매 호출 새 TCP) → `JdkClientHttpRequestFactory` + JDK `HttpClient` (HTTP/2 + keep-alive). (2) **`SnapStartWarmup` 컴포넌트**: `@PostConstruct` 로 init phase 에서 `dynamoDbClient.describeTable` + `marketDataPort.getUsdKrwRate()` 호출 → DDB SDK region/credential/endpoint cache, KIS access token (DDB), SSM credentials, `KisMarketDataAdapter.fxCache` 모두 채워 snapshot 에 박힘. SAM IAM 정책에 `dynamodb:DescribeTable` 권한 1회 추가. (3) **DDB persistent `FxRateStore`**: 새 port + `DynamoFxRateStore` 어댑터 (`META#fx / USD_KRW` 항목). `getUsdKrwRate()` 가 in-memory → DDB → KIS/fallback 3-layer. **SnapStart deploy 시 init phase 2회 실행되며 두 번째 init 이 KIS EGW00133(1분당 1회) 으로 거부되던 race 해소** — 두 번째 init 이 DDB hit 으로 즉시 cache 채움. (4) **`FX_TTL` 1h → 6h** 로 cache 유효 윈도우 확장. `org.crac` 의 `afterRestore` priming 은 시도했으나 wall clock 으로 손해 (priming 비용이 Restore Duration 에 박혀 사용자 체감 시간 = Restore + Invoke 가 오히려 늘어남) → 제거 + `@PostConstruct` 만 유지. 측정: cold first invoke 6.2s → ~2-2.5s 단축 (75%). `ReservedConcurrentExecutions` (함수 단위) 와 호환. 알람 `FunctionName` dimension 은 모든 버전/alias 합산이라 변경 불필요. 첫 SnapStart 활성화 배포만 snapshot 빌드로 평소보다 5~15분 더 걸리고, 이후 배포는 함수 코드/설정 변경이 없으면 새 버전 발행 자체를 건너뛰어 snapshot 재생성 비용 없음. |
 | infra: frankfurter.app → frankfurter.dev v2 | frankfurter 폴백 환율 API 가 명세 변경 (`/latest?from=USD&to=KRW` 객체 응답 → `/v2/rates?base=USD&quotes=KRW` 배열 응답 `[{date,base,quote,rate}]`). `KisMarketDataAdapter.fetchRateFromFallback`, `KisMarketDataConfig.@Value default`, `application.yml fx.fallback-url` 동시 갱신. 기존 wiremock stub 도 새 URL/응답 형태로. KIS EGW00133 발생 시 폴백 응답 정상 파싱 보장 (SnapStart 두 번째 init priming 의 마지막 잠재 issue 해소). |
-| infra/be/fe: same-origin 전환 + API Gateway 직접 호출 차단 | CloudFront 분포에 `BackendApiOrigin` (API Gateway, `OriginPath=/${Stage}`, HTTPS-only) 추가 + `/api/*` CacheBehavior (managed CachingDisabled + AllViewerExceptHostHeader). SPA viewer-request 함수도 `/api/*` 에 attach 되어 Basic Auth 가 API 호출에도 적용된다 (브라우저가 same-origin 이라 저장된 credential 자동 재전송). preflight 가 발생하지 않으므로 `BackendApi.Cors` 블록 + `ApiOptions` event + Lambda 의 `preflight()` / `CORS_ALLOWED_ORIGIN` env / response Access-Control-Allow-Origin 헤더 일괄 제거. API Gateway 직접 호출 차단은 **공유 시크릿 패턴**: 새 SSM SecureString `/portfolio/api-gateway/origin-verify` → `OriginVerifyHash` 파라미터 → CloudFront origin custom header `X-Origin-Verify` 주입 → Lambda 진입점이 `ORIGIN_VERIFY_SECRET` env 와 case-insensitive 비교 → 누락/불일치 즉시 403. API key 가 leak 돼도 CloudFront 우회 직접 호출은 차단됨. 프론트엔드 `VITE_API_BASE_URL` 제거, `api/client.ts` 가 relative path (`/api/...`) 만 사용 — vite proxy 가 dev 환경에서도 same-origin 유지. `infra/deploy.sh` 가 두 SSM SecureString (Basic Auth hash + Origin verify) 을 함께 읽어 `--parameter-overrides` 로 전달. IAM `gha-deploy-policy.json` 의 SsmReadDeployParams Resource 에 새 경로 1줄 추가. `frontend-deploy.yml` 의 invoke URL 추출 step 제거 (API key 추출만 남김). 4-layer 방어 완성: GeoRestriction(KR) → CloudFront Basic Auth → X-Origin-Verify → API key + Usage plan throttle. |
  
 ### 다음 단계 (재개 시 이 순서)
 
@@ -103,19 +102,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 1. `aws iam create-role` + `put-role-policy` (`infra/iam/` JSON 사용 — `<ACCOUNT_ID>` 치환 후). 상세 명령은 [infra/iam/README.md](infra/iam/README.md).
 2. `gh secret set AWS_ROLE_ARN --repo JeongJB/stock-portfolio --body "..."`.
 3. 첫 master push → Actions 탭에서 두 워크플로 자동 트리거 확인.
-
-### 운영 1회 작업 (same-origin 전환 시)
-
-1. **Origin verify 시크릿 생성**:
-   ```bash
-   aws ssm put-parameter \
-     --name /portfolio/api-gateway/origin-verify \
-     --type SecureString \
-     --value "$(openssl rand -hex 32)" \
-     --region ap-northeast-2
-   ```
-2. **GHA IAM 정책 갱신**: `infra/iam/gha-deploy-policy.json` 의 `SsmReadDeployParams` 에 새 경로 추가 (이미 commit). AWS 콘솔에서 기존 role policy 를 새 JSON 으로 교체 (또는 `aws iam put-role-policy` 재실행).
-3. 백엔드 deploy → CloudFront propagation 5~10분 후 동작 확인.
 
 ## 기술 스택
 

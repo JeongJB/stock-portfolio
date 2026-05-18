@@ -96,15 +96,6 @@ Parameters:
       SSM SecureString /portfolio/cloudfront/basic-auth-hash 에서 deploy 시점 주입한다.
       운영 wrapper `infra/deploy.sh` 가 SSM 에서 읽어 --parameter-overrides 로 전달.
       회전은 SSM 값만 갱신 후 `infra/deploy.sh` 재실행 (template 변경 불필요).
-  OriginVerifyHash:
-    Type: String
-    NoEcho: true
-    Description: >-
-      API Gateway 직접 호출 차단용 공유 시크릿. CloudFront 분포가 origin 으로
-      요청 전달 시 X-Origin-Verify 헤더로 주입하고, Lambda 가 진입점에서 검증.
-      누락/불일치면 즉시 403. repo/template 에 박지 않고 SSM SecureString
-      /portfolio/api-gateway/origin-verify 에서 deploy 시점 주입. 회전은 SSM 값만
-      갱신 후 `infra/deploy.sh` 재실행. 32+ byte 랜덤 hex 권장 (uuidgen / openssl rand -hex 32).
 
 Conditions:
   HasFrontendBucketName: !Not [!Equals [!Ref FrontendBucketName, '']]
@@ -202,8 +193,14 @@ Resources:
       StageName: !Ref Stage
       EndpointConfiguration:
         Type: REGIONAL
-      # CORS 설정 없음 — same-origin (CloudFront /api/* path 라우팅) 으로 전환되어
-      # 브라우저가 preflight 자체를 보내지 않는다. OPTIONS Mock 도 불필요.
+      # SAM 이 OPTIONS preflight 메서드를 Mock integration 으로 자동 생성한다.
+      # OPTIONS 는 ApiKeyRequired 자동 면제 (브라우저가 preflight 에 커스텀 헤더 안 붙임).
+      # AllowOrigin 은 CloudFront 분포 도메인으로 한정 — 다른 출처 브라우저 호출 차단.
+      # 실제 응답 본문의 CORS 헤더(Lambda 직접 부착)도 같은 값을 사용하도록 환경변수로 주입.
+      Cors:
+        AllowOrigin: !Sub "'https://${FrontendDistribution.DomainName}'"
+        AllowHeaders: "'Content-Type,x-api-key'"
+        AllowMethods: "'GET,POST,PUT,DELETE,PATCH,OPTIONS'"
       Auth:
         ApiKeyRequired: true
         UsagePlan:
@@ -250,12 +247,14 @@ Resources:
           PORTFOLIO_TABLE_NAME: !Ref TableName
           KIS_APPKEY_PARAMETER: !Ref KisAppKeyParameter
           KIS_APPSECRET_PARAMETER: !Ref KisAppSecretParameter
-          # CloudFront origin custom header (X-Origin-Verify) 와 비교할 공유 시크릿.
-          # 일치하지 않으면 Lambda 가 즉시 403 — API key 가 leak 돼도 CloudFront 우회 호출 차단.
-          ORIGIN_VERIFY_SECRET: !Ref OriginVerifyHash
+          # API Gateway Cors.AllowOrigin 과 동일한 값을 Lambda 응답 헤더에도 부착해야
+          # 브라우저가 preflight + actual response 양쪽 모두에서 일치 검증을 통과한다.
+          CORS_ALLOWED_ORIGIN: !Sub "https://${FrontendDistribution.DomainName}"
       Events:
-        # same-origin (CloudFront /api/*) 으로 전환되어 OPTIONS preflight 가 생기지 않는다.
-        # 메서드별로 명시 정의 — ANY 단일 정의는 SAM 이 OPTIONS 까지 잡아 ApiKey 강제로 떨어뜨림.
+        # Method: ANY 로 묶으면 OPTIONS preflight 도 ANY 로 잡혀 ApiKeyRequired 가 적용된다.
+        # 브라우저는 preflight 에 x-api-key 를 안 붙이므로 403. 메서드별 분리 + OPTIONS 만
+        # ApiKeyRequired: false 로 명시해 Lambda 의 preflight() 핸들러가 응답하게 한다.
+        # (SAM Cors 의 OPTIONS Mock 은 {proxy+} 경로에서 자동 생성이 일관되지 않아 의존하지 않음.)
         ApiGet:
           Type: Api
           Properties:
@@ -280,6 +279,14 @@ Resources:
             RestApiId: !Ref BackendApi
             Path: /api/{proxy+}
             Method: DELETE
+        ApiOptions:
+          Type: Api
+          Properties:
+            RestApiId: !Ref BackendApi
+            Path: /api/{proxy+}
+            Method: OPTIONS
+            Auth:
+              ApiKeyRequired: false
 
   # === 자동 스냅샷 cron — 매일 KST 23:30 ===
   # 별도 Lambda 함수로 분리 (같은 jar, 같은 Role, FUNCTION_DEFINITION 만 다름).
@@ -580,19 +587,6 @@ Resources:
             S3OriginConfig:
               # OAC 사용 시 OriginAccessIdentity 는 빈 문자열로 둔다 (OAI 미사용 표식).
               OriginAccessIdentity: ''
-          # API Gateway 를 두 번째 origin 으로 묶어 same-origin /api/* 라우팅 실현.
-          # OriginCustomHeaders 로 주입한 X-Origin-Verify 가 Lambda 진입점에서 검증되어
-          # API Gateway 직접 호출(URL 노출 + API key leak 케이스)을 차단한다.
-          - Id: BackendApiOrigin
-            DomainName: !Sub ${BackendApi}.execute-api.${AWS::Region}.amazonaws.com
-            OriginPath: !Sub /${Stage}
-            CustomOriginConfig:
-              OriginProtocolPolicy: https-only
-              OriginSSLProtocols:
-                - TLSv1.2
-            OriginCustomHeaders:
-              - HeaderName: X-Origin-Verify
-                HeaderValue: !Ref OriginVerifyHash
         DefaultCacheBehavior:
           TargetOriginId: FrontendS3Origin
           ViewerProtocolPolicy: redirect-to-https
@@ -609,21 +603,6 @@ Resources:
         # SPA 진입점 / SW / manifest 류는 매번 갱신해야 PWA autoUpdate 가 즉시 반영된다.
         # AWS managed: CachingDisabled (4135ea2d-6df8-44a3-9df3-4b5a84be39ad).
         CacheBehaviors:
-          # same-origin API 라우팅 — 브라우저 → CloudFront(/api/*) → API Gateway origin.
-          # CachingDisabled 로 응답 캐싱 없음. AllViewerExceptHostHeader 로 viewer 의 모든
-          # 헤더/쿼리/쿠키를 forward (Host 제외 — API Gateway 가 자체 Host 받아야 함).
-          # SPA viewer-request 함수도 attach 해서 Basic Auth 가 API 호출에도 적용된다.
-          - PathPattern: /api/*
-            TargetOriginId: BackendApiOrigin
-            ViewerProtocolPolicy: redirect-to-https
-            AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
-            CachedMethods: [GET, HEAD]
-            Compress: true
-            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-            OriginRequestPolicyId: b689b0a8-fce7-44b3-9a76-c0f4e9b32d5f
-            FunctionAssociations:
-              - EventType: viewer-request
-                FunctionARN: !GetAtt FrontendSpaRouter.FunctionARN
           - PathPattern: /index.html
             TargetOriginId: FrontendS3Origin
             ViewerProtocolPolicy: redirect-to-https
