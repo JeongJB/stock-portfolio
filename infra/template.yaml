@@ -620,7 +620,7 @@ Resources:
             CachedMethods: [GET, HEAD]
             Compress: true
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+            OriginRequestPolicyId: b689b0a8-fce7-44b3-9a76-c0f4e9b32d5f
             FunctionAssociations:
               - EventType: viewer-request
                 FunctionARN: !GetAtt FrontendSpaRouter.FunctionARN
