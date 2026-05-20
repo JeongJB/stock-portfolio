@@ -527,6 +527,16 @@ Resources:
           var headers = request.headers;
           var uri = request.uri;
 
+          // /api/* 는 Basic Auth 면제 — SPA UI 의 API 호출이 매번 Basic Auth 검증을
+          // 거치면 PWA 백그라운드 복귀 시 브라우저의 in-memory credential cache 가
+          // 비워졌을 때 fetch() 가 401 로 실패해 사용자가 빈번한 재로그인을 강요받는다.
+          // /api/* 의 실제 보호는 (a) Lambda 의 X-Origin-Verify 헤더 검증 (CloudFront 만
+          // 주입 가능) + (b) API Gateway 의 x-api-key 가 담당하며, 두 시크릿 모두
+          // Basic Auth 통과 후에야 접근 가능한 번들/CloudFront 경유에서만 유효하다.
+          if (uri.indexOf('/api/') === 0) {
+            return request;
+          }
+
           // PWA 자산은 인증 검사 건너뜀 (단, SPA 리라이트도 건너뜀 — 정적 파일이라 그대로).
           if (isPwaAsset(uri)) {
             return request;
@@ -541,10 +551,7 @@ Resources:
             return unauthorized();
           }
 
-          // 인증 통과 → 기존 SPA 라우팅 리라이트.
-          if (uri.indexOf('/api/') === 0) {
-            return request;
-          }
+          // 인증 통과 → SPA 라우팅 리라이트 (확장자 없는 경로만 /index.html 로).
           var lastSegment = uri.substring(uri.lastIndexOf('/') + 1);
           if (lastSegment.indexOf('.') !== -1) {
             return request;
