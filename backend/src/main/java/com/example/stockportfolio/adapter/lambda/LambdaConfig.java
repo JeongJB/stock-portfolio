@@ -22,6 +22,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
@@ -44,9 +45,12 @@ public class LambdaConfig {
 
     private static final Logger log = LoggerFactory.getLogger(LambdaConfig.class);
 
-    // CloudFront 가 origin custom header 로 주입하는 공유 시크릿. 미설정(로컬 단위 테스트) 시
-    // 검증을 건너뛴다 — 운영 Lambda 는 SAM 이 항상 ORIGIN_VERIFY_SECRET 환경변수를 주입한다.
+    // CloudFront 가 origin custom header 로 주입하는 공유 시크릿. 운영 Lambda 는 SAM 이 항상
+    // ORIGIN_VERIFY_SECRET 환경변수를 주입한다. 로컬 단위 테스트(JUnit) 에서는 미설정이라
+    // verifyOrigin 이 fail-secure 분기로 들어가지 않도록 RUNNING_IN_LAMBDA 가드를 둔다.
     private static final String ORIGIN_VERIFY_SECRET = resolveOriginVerifySecret();
+    // AWS Lambda 런타임은 항상 AWS_LAMBDA_FUNCTION_NAME 을 자동 주입한다 — 운영 환경 식별자.
+    private static final boolean RUNNING_IN_LAMBDA = System.getenv("AWS_LAMBDA_FUNCTION_NAME") != null;
 
     private static String resolveOriginVerifySecret() {
         String env = System.getenv("ORIGIN_VERIFY_SECRET");
@@ -164,12 +168,23 @@ public class LambdaConfig {
 
     /**
      * CloudFront origin custom header (X-Origin-Verify) 와 ORIGIN_VERIFY_SECRET 비교.
-     * 환경변수가 미설정(local 단위 테스트) 이면 검증을 통과시킨다.
-     * APIGatewayProxyRequestEvent.getHeaders() 는 헤더명을 그대로 보존하므로 case-insensitive 매치 필요.
+     *
+     * <p>fail-secure 정책: 운영 Lambda(AWS_LAMBDA_FUNCTION_NAME 박혀 있음) 에서 secret 이
+     * 비어 있으면 설정 오류로 간주하고 모든 요청 거부. 로컬 단위 테스트(JUnit) 에서는
+     * env var 가 자연스럽게 미설정이므로 통과시켜야 한다.
+     *
+     * <p>비교는 {@link MessageDigest#isEqual(byte[], byte[])} 로 상수 시간에 수행해 timing
+     * side-channel 가능성을 차단한다. 네트워크 latency 가 압도적이라 실측 위험은 매우 낮지만
+     * best practice.
+     *
+     * <p>APIGatewayProxyRequestEvent.getHeaders() 는 헤더명을 그대로 보존하므로
+     * case-insensitive 매치 필요.
      */
     private static boolean verifyOrigin(APIGatewayProxyRequestEvent event) {
         if (ORIGIN_VERIFY_SECRET == null) {
-            return true;
+            // 운영(Lambda) 에서 secret 누락은 설정 오류 — fail-secure.
+            // 로컬 테스트 환경에선 AWS_LAMBDA_FUNCTION_NAME 미설정이라 통과.
+            return !RUNNING_IN_LAMBDA;
         }
         Map<String, String> headers = event.getHeaders();
         if (headers == null) {
@@ -177,7 +192,13 @@ public class LambdaConfig {
         }
         for (Map.Entry<String, String> e : headers.entrySet()) {
             if (e.getKey() != null && e.getKey().equalsIgnoreCase("X-Origin-Verify")) {
-                return ORIGIN_VERIFY_SECRET.equals(e.getValue());
+                String value = e.getValue();
+                if (value == null) {
+                    return false;
+                }
+                return MessageDigest.isEqual(
+                        ORIGIN_VERIFY_SECRET.getBytes(StandardCharsets.UTF_8),
+                        value.getBytes(StandardCharsets.UTF_8));
             }
         }
         return false;

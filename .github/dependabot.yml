@@ -5,22 +5,42 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
+      timezone: "Asia/Seoul"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    # minor/patch 는 한 PR 로 묶어 1 인 리뷰 부담 ↓. major 는 개별 PR (breaking change 검토 필요).
+    groups:
+      backend-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
       day: "monday"
+      timezone: "Asia/Seoul"
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      frontend-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
+      timezone: "Asia/Seoul"
     open-pull-requests-limit: 3
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      actions-all:
+        patterns:
+          - "*"
