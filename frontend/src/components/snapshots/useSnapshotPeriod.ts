@@ -79,7 +79,14 @@ export function usePeriodWithStorage(storageKey: string): UseSnapshotPeriodResul
   }, [state, storageKey])
 
   const setPreset = useCallback((preset: PeriodPreset) => {
-    setState((prev) => ({ ...prev, preset }))
+    setState((prev) => {
+      // 비-CUSTOM → CUSTOM 전환 시 from/to 를 오늘로 리셋해 사용자가 빈/오래된 범위를 바로 보지 않도록.
+      if (preset === 'CUSTOM' && prev.preset !== 'CUSTOM') {
+        const today = formatKstDate()
+        return { preset, customFrom: today, customTo: today }
+      }
+      return { ...prev, preset }
+    })
   }, [])
 
   const setCustomFrom = useCallback((date: string) => {

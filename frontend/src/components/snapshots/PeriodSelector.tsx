@@ -26,6 +26,13 @@ function toCompact(iso: string): string {
   return iso.replace(/-/g, '')
 }
 
+// 'yyyyMMdd' 자리수에 따라 YYYY.MM.DD 형태 마스킹.
+function formatDisplay(digits: string): string {
+  if (digits.length <= 4) return digits
+  if (digits.length <= 6) return `${digits.slice(0, 4)}.${digits.slice(4)}`
+  return `${digits.slice(0, 4)}.${digits.slice(4, 6)}.${digits.slice(6, 8)}`
+}
+
 // 'yyyyMMdd' (8자리) 가 실제 달력상 유효한 날짜면 'yyyy-MM-dd' 반환, 아니면 null.
 function parseCompact(compact: string): string | null {
   if (!/^\d{8}$/.test(compact)) return null
@@ -69,7 +76,7 @@ function CompactDateInput({ value, onChange, invalid }: CompactDateInputProps) {
   const showError = invalid || incomplete || invalidCompleted
 
   const inputBaseClass =
-    'w-32 rounded-md border bg-white px-2 py-1 text-sm tabular-nums dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500'
+    'w-36 rounded-md border bg-white px-2 py-1 text-sm tabular-nums dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500'
   const inputClass = showError
     ? `${inputBaseClass} border-rose-500 dark:border-rose-500`
     : `${inputBaseClass} border-slate-300 dark:border-slate-600`
@@ -94,10 +101,10 @@ function CompactDateInput({ value, onChange, invalid }: CompactDateInputProps) {
     <input
       type="text"
       inputMode="numeric"
-      pattern="[0-9]*"
-      maxLength={8}
-      placeholder="YYYYMMDD"
-      value={buffer}
+      pattern="[0-9.]*"
+      maxLength={10}
+      placeholder="YYYY.MM.DD"
+      value={formatDisplay(buffer)}
       onChange={(e) => handleChange(e.target.value)}
       className={inputClass}
       aria-invalid={showError || undefined}
@@ -140,7 +147,7 @@ export function PeriodSelector({
       {isCustom && (
         <div className="flex flex-wrap items-end gap-3 pt-1">
           <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-            시작 (YYYYMMDD)
+            시작 (YYYY.MM.DD)
             <CompactDateInput
               value={state.customFrom}
               onChange={onCustomFromChange}
@@ -148,7 +155,7 @@ export function PeriodSelector({
             />
           </label>
           <label className="flex flex-col gap-1 text-xs text-slate-600 dark:text-slate-300">
-            종료 (YYYYMMDD)
+            종료 (YYYY.MM.DD)
             <CompactDateInput
               value={state.customTo}
               onChange={onCustomToChange}
