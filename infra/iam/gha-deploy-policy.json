@@ -202,7 +202,8 @@
         "ssm:GetParameters"
       ],
       "Resource": [
-        "arn:aws:ssm:ap-northeast-2:<ACCOUNT_ID>:parameter/portfolio/cloudfront/basic-auth-hash"
+        "arn:aws:ssm:ap-northeast-2:<ACCOUNT_ID>:parameter/portfolio/cloudfront/basic-auth-hash",
+        "arn:aws:ssm:ap-northeast-2:<ACCOUNT_ID>:parameter/portfolio/api-gateway/origin-verify"
       ]
     },
     {

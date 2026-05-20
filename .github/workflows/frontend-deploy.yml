@@ -43,19 +43,12 @@ jobs:
           aws-region: ap-northeast-2
           audience: sts.amazonaws.com
 
-      # Stack Output 에서 invoke URL 추출 + Usage plan 경유로 API key 값 추출.
-      # API key 는 add-mask 로 로그에서 가린 뒤 GITHUB_ENV 로 다음 step 들에 전달.
-      - name: Resolve API base URL and API key
+      # API key 만 추출해 add-mask 후 GITHUB_ENV 에 주입. 프론트엔드는 same-origin
+      # (CloudFront /api/* path) 이라 VITE_API_BASE_URL 은 불필요 (relative path 사용).
+      - name: Resolve API key
         run: |
           set -euo pipefail
-          STACK=stock-portfolio
           REGION=ap-northeast-2
-
-          API_URL=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK" \
-            --region "$REGION" \
-            --query 'Stacks[0].Outputs[?OutputKey==`BackendApiInvokeUrl`].OutputValue' \
-            --output text)
 
           USAGE_PLAN_ID=$(aws apigateway get-usage-plans \
             --region "$REGION" \
@@ -76,7 +69,6 @@ jobs:
             --output text)
 
           echo "::add-mask::$API_KEY"
-          echo "VITE_API_BASE_URL=$API_URL" >> "$GITHUB_ENV"
           echo "VITE_API_KEY=$API_KEY" >> "$GITHUB_ENV"
 
       - name: Build frontend
