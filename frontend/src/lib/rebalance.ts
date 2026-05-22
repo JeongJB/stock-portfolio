@@ -1,10 +1,11 @@
 // 비중 리밸런싱 계산기 (pure function).
-// 분모는 portfolio.totalMarketValueUsd (현금 제외 주식 가치 합). 입력은 모두 number 로 받는다 —
-// 호출부에서 BigDecimal string → Number 변환 책임.
+// 분모는 호출부가 선택 — 'EX_CASH' (주식 가치 합) 또는 'INC_CASH' (주식 + 현금).
+// 입력은 모두 number 로 받는다 — 호출부에서 BigDecimal string → Number 변환 책임.
 
 import type { PortfolioView, PositionView } from '../api/types'
 
 export type RebalanceAction = 'BUY' | 'SELL' | 'NONE'
+export type BasisMode = 'EX_CASH' | 'INC_CASH'
 
 export interface RebalanceInput {
   ticker: string
@@ -12,7 +13,8 @@ export interface RebalanceInput {
   lastPriceUsd: number
   marketValueUsd: number
   cashUsd: number
-  totalMarketValueUsd: number
+  // 비중 계산 분모 — 호출부가 BasisMode 에 따라 주식 합 or 주식+현금 으로 채움.
+  denominatorUsd: number
   targetWeightPct: number // 0 < x ≤ 100
 }
 
@@ -42,14 +44,13 @@ export function computeRebalance(input: RebalanceInput): RebalanceResult {
     lastPriceUsd,
     marketValueUsd,
     cashUsd,
-    totalMarketValueUsd,
+    denominatorUsd,
     targetWeightPct,
   } = input
 
-  const currentWeightPct =
-    totalMarketValueUsd > 0 ? (marketValueUsd / totalMarketValueUsd) * 100 : 0
+  const currentWeightPct = denominatorUsd > 0 ? (marketValueUsd / denominatorUsd) * 100 : 0
 
-  const targetUsd = totalMarketValueUsd * (targetWeightPct / 100)
+  const targetUsd = denominatorUsd * (targetWeightPct / 100)
   const diffUsd = targetUsd - marketValueUsd
   const rawQty = lastPriceUsd > 0 ? diffUsd / lastPriceUsd : 0
   // half-away-from-zero rounding — 음수 rawQty 에 대해서도 절대값 기준 반올림이라 일관성 있다.
@@ -70,7 +71,7 @@ export function computeRebalance(input: RebalanceInput): RebalanceResult {
   // 실현 비중·오차
   const realizedMarketValueUsd = marketValueUsd + signedQty * lastPriceUsd
   const realizedWeightPct =
-    totalMarketValueUsd > 0 ? (realizedMarketValueUsd / totalMarketValueUsd) * 100 : 0
+    denominatorUsd > 0 ? (realizedMarketValueUsd / denominatorUsd) * 100 : 0
   const errorPct = targetWeightPct - realizedWeightPct
 
   // 매수 시 현금 차감. 매도 시 현금 증가.
@@ -96,26 +97,32 @@ export function computeRebalance(input: RebalanceInput): RebalanceResult {
 }
 
 /**
- * PortfolioView + PositionView + targetWeightPct → RebalanceInput.
+ * PortfolioView + PositionView + targetWeightPct + basisMode → RebalanceInput.
  * lastPriceUsd 가 null 이거나 0 이면 null 반환 (호출부는 종목 선택 단계에서 이미 걸러야 정상).
+ * basisMode='EX_CASH': 분모 = 주식 가치 합. 'INC_CASH': 분모 = 주식 + 현금.
  */
 export function buildRebalanceInput(
   portfolio: PortfolioView,
   position: PositionView,
   targetWeightPct: number,
+  basisMode: BasisMode,
 ): RebalanceInput | null {
   if (position.lastPriceUsd == null) return null
   const lastPriceUsd = Number(position.lastPriceUsd)
   if (!Number.isFinite(lastPriceUsd) || lastPriceUsd <= 0) return null
   const marketValueUsd = Number(position.marketValueUsd ?? '0')
   if (!Number.isFinite(marketValueUsd)) return null
+  const cashUsd = Number(portfolio.cashUsd)
+  const totalMarketValueUsd = Number(portfolio.totalMarketValueUsd)
+  const denominatorUsd =
+    basisMode === 'INC_CASH' ? totalMarketValueUsd + cashUsd : totalMarketValueUsd
   return {
     ticker: position.ticker,
     qty: Number(position.qty),
     lastPriceUsd,
     marketValueUsd,
-    cashUsd: Number(portfolio.cashUsd),
-    totalMarketValueUsd: Number(portfolio.totalMarketValueUsd),
+    cashUsd,
+    denominatorUsd,
     targetWeightPct,
   }
 }

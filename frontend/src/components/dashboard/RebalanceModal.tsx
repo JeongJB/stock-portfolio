@@ -3,7 +3,20 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import type { PortfolioView, PositionView } from '../../api/types'
 import { formatMoney, formatQty } from '../../app/format'
-import { buildRebalanceInput, computeRebalance, type RebalanceResult } from '../../lib/rebalance'
+import {
+  buildRebalanceInput,
+  computeRebalance,
+  type BasisMode,
+  type RebalanceResult,
+} from '../../lib/rebalance'
+
+const BASIS_MODE_KEY = 'rebalance-basis-mode'
+
+function loadBasisMode(): BasisMode {
+  if (typeof window === 'undefined') return 'EX_CASH'
+  const stored = window.localStorage.getItem(BASIS_MODE_KEY)
+  return stored === 'INC_CASH' ? 'INC_CASH' : 'EX_CASH'
+}
 
 interface Props {
   open: boolean
@@ -22,11 +35,14 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
   )
 
   const [ticker, setTicker] = useState<string>(initialTicker ?? candidates[0]?.ticker ?? '')
+  const [basisMode, setBasisMode] = useState<BasisMode>(loadBasisMode)
   const [targetPctInput, setTargetPctInput] = useState<string>('')
-  // 계산 시점의 target 도 함께 박아 input 이 바뀌어도 결과 카드의 "목표" 표시가 고정되게 한다.
-  const [result, setResult] = useState<{ computed: RebalanceResult; targetPct: number } | null>(
-    null,
-  )
+  // 계산 시점의 target/basisMode 도 함께 박아 input 이 바뀌어도 결과 카드 표시가 고정되게 한다.
+  const [result, setResult] = useState<{
+    computed: RebalanceResult
+    targetPct: number
+    basisMode: BasisMode
+  } | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
   const selectedPosition: PositionView | undefined = useMemo(
@@ -35,14 +51,21 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
   )
 
   const totalMarketValueUsd = Number(portfolio.totalMarketValueUsd)
+  const cashUsd = Number(portfolio.cashUsd)
+  const denominatorUsd = useMemo(() => {
+    const stocks = Number.isFinite(totalMarketValueUsd) ? totalMarketValueUsd : 0
+    const cash = Number.isFinite(cashUsd) ? cashUsd : 0
+    return basisMode === 'INC_CASH' ? stocks + cash : stocks
+  }, [basisMode, totalMarketValueUsd, cashUsd])
+  const denominatorValid = denominatorUsd > 0
   const totalMarketValueValid = Number.isFinite(totalMarketValueUsd) && totalMarketValueUsd > 0
 
   const currentWeightPct = useMemo(() => {
-    if (!selectedPosition || !totalMarketValueValid) return null
+    if (!selectedPosition || !denominatorValid) return null
     const mv = Number(selectedPosition.marketValueUsd ?? '0')
     if (!Number.isFinite(mv)) return null
-    return (mv / totalMarketValueUsd) * 100
-  }, [selectedPosition, totalMarketValueUsd, totalMarketValueValid])
+    return (mv / denominatorUsd) * 100
+  }, [selectedPosition, denominatorUsd, denominatorValid])
 
   // 모달이 열릴 때 prefill ticker (initialTicker 가 바뀌어도 동일).
   useEffect(() => {
@@ -101,12 +124,22 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
       setErrorMsg('목표 비중은 0 초과 100 이하의 값이어야 합니다.')
       return
     }
-    const input = buildRebalanceInput(portfolio, selectedPosition, target)
+    const input = buildRebalanceInput(portfolio, selectedPosition, target, basisMode)
     if (!input) {
       setErrorMsg('해당 종목의 시세를 사용할 수 없어 계산할 수 없습니다.')
       return
     }
-    setResult({ computed: computeRebalance(input), targetPct: target })
+    setResult({ computed: computeRebalance(input), targetPct: target, basisMode })
+  }
+
+  const handleBasisModeChange = (next: BasisMode) => {
+    setBasisMode(next)
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(BASIS_MODE_KEY, next)
+    }
+    // 모드가 바뀌면 현재 비중도 바뀌므로 결과 카드는 reset (input default 도 useEffect 가 갱신).
+    setResult(null)
+    setErrorMsg(null)
   }
 
   const handleNavigate = (action: 'BUY' | 'SELL', qty: number) => {
@@ -166,6 +199,40 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
               </select>
             </label>
 
+            <fieldset className="flex flex-col gap-1 text-sm">
+              <legend className="text-slate-600 dark:text-slate-300">비중 계산 기준</legend>
+              <div
+                role="radiogroup"
+                aria-label="비중 계산 기준"
+                className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-950"
+              >
+                {(
+                  [
+                    { value: 'EX_CASH', label: '현금 제외' },
+                    { value: 'INC_CASH', label: '현금 포함' },
+                  ] as const
+                ).map((opt) => {
+                  const active = basisMode === opt.value
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      onClick={() => handleBasisModeChange(opt.value)}
+                      className={`min-h-[36px] flex-1 rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                          : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </fieldset>
+
             {selectedPosition && currentWeightPct != null && (
               <div className="rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800/50 dark:text-slate-300">
                 <div>
@@ -175,8 +242,9 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
                   </span>
                 </div>
                 <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  분모는 현금 제외 주식 가치 합계(
-                  {formatMoney(portfolio.totalMarketValueUsd, 'USD')})
+                  {basisMode === 'INC_CASH'
+                    ? `분모는 주식 + 현금 (${formatMoney(String(denominatorUsd), 'USD')})`
+                    : `분모는 현금 제외 주식 가치 합계 (${formatMoney(portfolio.totalMarketValueUsd, 'USD')})`}
                 </div>
               </div>
             )}
@@ -223,6 +291,7 @@ export function RebalanceModal({ open, portfolio, initialTicker, onClose }: Prop
                 ticker={selectedPosition.ticker}
                 result={result.computed}
                 targetPct={result.targetPct}
+                basisMode={result.basisMode}
                 usdKrwRate={rateValid ? usdKrwRate : null}
                 onNavigate={handleNavigate}
               />
@@ -249,12 +318,14 @@ function ResultCard({
   ticker,
   result,
   targetPct,
+  basisMode,
   usdKrwRate,
   onNavigate,
 }: {
   ticker: string
   result: RebalanceResult
   targetPct: number
+  basisMode: BasisMode
   usdKrwRate: number | null
   onNavigate: (action: 'BUY' | 'SELL', qty: number) => void
 }) {
@@ -268,6 +339,8 @@ function ResultCard({
     : isSell
       ? 'text-rose-700 dark:text-rose-400'
       : 'text-slate-600 dark:text-slate-300'
+
+  const basisLabel = basisMode === 'INC_CASH' ? '현금 포함' : '현금 제외'
 
   const krwCost = usdKrwRate != null ? result.costUsd * usdKrwRate : null
   const krwPostCash = usdKrwRate != null ? result.postCashUsd * usdKrwRate : null
@@ -287,6 +360,9 @@ function ResultCard({
             </span>
           </p>
         )}
+        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+          기준: {basisLabel}
+        </p>
       </div>
 
       {!isNone && (
