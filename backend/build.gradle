@@ -33,7 +33,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
 
     implementation 'org.springframework.cloud:spring-cloud-function-adapter-aws'
-    implementation 'com.amazonaws:aws-lambda-java-events:3.13.0'
+    implementation 'com.amazonaws:aws-lambda-java-events:3.16.1'
 
     implementation platform('software.amazon.awssdk:bom:2.32.5')
     implementation 'software.amazon.awssdk:dynamodb'
